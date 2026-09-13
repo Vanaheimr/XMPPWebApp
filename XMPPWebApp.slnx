@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/Dependencies/">
+    <Project Path="libs/Ratatoskr/Ratatoskr/Ratatoskr.csproj" />
+    <Project Path="libs/Ratatoskr/RatatoskrTests/RatatoskrTests.csproj" />
+    <Project Path="libs/Hermod/Hermod/Hermod.csproj" />
+    <Project Path="libs/Hermod/HermodTests/HermodTests.csproj" />
+    <Project Path="libs/Styx/Styx/Styx.csproj" />
+    <Project Path="libs/Styx/StyxTests/StyxTests.csproj" />
+  </Folder>
+  <Folder Name="/Frontend/">
+    <File Path="src/Frontend/package.json" />
+    <File Path="src/Frontend/tsconfig.json" />
+    <File Path="src/Frontend/webpack.config.js" />
+  </Folder>
+  <Project Path="src/XMPPWebApp/XMPPWebApp.csproj" />
+  <Project Path="src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj" />
+</Solution>

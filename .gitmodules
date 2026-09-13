@@ -1,0 +1,50 @@
+# The public GitHub mirrors, not ssh://git@git.graphdefined.com:5001/. Both
+# carry the same commits, but only one of them can be reached without a
+# credential: the internal host is not routable from GitHub Actions, and an SSH
+# URL would need a deploy key for three repositories before the first clone
+# succeeded. The conformance suites name the same URLs for the same reason.
+#
+# Whoever prefers to push through the internal host sets that per clone rather
+# than here:
+#
+#     git config submodule.libs/Hermod.url ssh://git@git.graphdefined.com:5001/Vanaheimr/Hermod.git
+#     git submodule sync libs/Hermod
+#
+# An existing checkout is not affected by this file at all - .git/config keeps
+# the URL it was cloned with until `git submodule sync` is run.
+#
+# Why they are back: an application repository that cannot be cloned and built
+# is an application repository that does not work. Reaching sideways for
+# ..\..\Ratatoskr asked whoever cloned this to know, from a restore error
+# naming three paths outside the tree, that four repositories go beside each
+# other. One checkout is the whole build again, and the revisions are pinned,
+# so a breaking change upstream no longer turns this red on its own.
+#
+# The layout under libs/ is the same side-by-side one, which is what lets the
+# libraries keep reaching for each other unchanged: Ratatoskr finds Hermod at
+# ..\..\Hermod, Hermod finds Styx at ..\..\Styx.
+#
+# The branch is named on every entry so that `git submodule update --remote`
+# means the same thing in every clone. Without it, --remote follows the default
+# branch of the far side as recorded in refs/remotes/origin/HEAD - and that is a
+# local note taken once at clone time, not a question asked of the far side. In
+# XMPPConformanceTests it still pointed at origin/main, a branch GitHub has not
+# had for a long time, and --remote walked that Ratatoskr *backwards* to a
+# revision from around the rename. These three clones are two days old and point
+# at master, so --remote does the right thing today - by youth rather than by
+# instruction, and a clone only gets older.
+#
+# Nothing here is pinned any differently by it: the pins are the gitlinks in the
+# commit, and a plain `git submodule update` still restores exactly those.
+[submodule "libs/Styx"]
+	path = libs/Styx
+	url = https://github.com/Vanaheimr/Styx.git
+	branch = master
+[submodule "libs/Hermod"]
+	path = libs/Hermod
+	url = https://github.com/Vanaheimr/Hermod.git
+	branch = master
+[submodule "libs/Ratatoskr"]
+	path = libs/Ratatoskr
+	url = https://github.com/Vanaheimr/Ratatoskr.git
+	branch = master

@@ -1,0 +1,112 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>XMPPWebApp</AssemblyName>
+    <RootNamespace>org.GraphDefined.Vanaheimr.XMPPWebApp</RootNamespace>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The chat store, the sessions and the image rule are checked directly by
+      XMPPWebApp.Tests; none of them belongs in the public surface of a web
+      application just to be testable.
+    -->
+    <InternalsVisibleTo Include="org.GraphDefined.Vanaheimr.XMPPWebApp.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The XMPP client logs through Microsoft.Extensions.Logging; unlike the
+      console there is no input line to protect here, so the stock console
+      logger is enough.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Ratatoskr is the XMPP protocol, Hermod the HTTP server in front of it.
+      Both are pinned submodules under libs/; Ratatoskr reaches for Hermod at
+      ..\..\Hermod, which under libs/ is its sibling, so both references name
+      the same Hermod.csproj.
+    -->
+    <ProjectReference Include="..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj" />
+    <ProjectReference Include="..\..\libs\Hermod\Hermod\Hermod.csproj" />
+  </ItemGroup>
+
+
+  <!--
+    Frontend integration
+    ====================
+
+    The frontend lives in ../Frontend (npm + webpack) and is built into
+    ../Frontend/dist. This project runs the build and embeds dist/ as manifest
+    resources named "<RootNamespace>.HTTPRoot.<dir>.<file>", e.g.
+    "org.GraphDefined.Vanaheimr.XMPPWebApp.HTTPRoot.assets.app.3f9c1a.js".
+
+      dotnet build                            builds the frontend when its inputs changed
+      dotnet build -p:SkipFrontendBuild=true  backend only, reuses the existing dist/
+
+    Three separate targets on purpose:
+      - NpmInstall     runs "npm ci" only when node_modules is missing
+      - BuildFrontend  runs "npm run build" incrementally (Inputs/Outputs)
+      - EmbedFrontend  adds the EmbeddedResource items; it must NOT carry
+                       Inputs/Outputs, because a target skipped as up-to-date
+                       does not evaluate its item groups.
+    Static globs in the project body would not work: they are evaluated before
+    any target runs, i.e. before dist/ exists on a clean build.
+  -->
+
+  <PropertyGroup Label="Frontend">
+    <FrontendDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '..', 'Frontend'))</FrontendDir>
+    <FrontendDist>$([MSBuild]::NormalizeDirectory('$(FrontendDir)', 'dist'))</FrontendDist>
+    <FrontendResourcePrefix>$(RootNamespace).HTTPRoot.</FrontendResourcePrefix>
+    <FrontendBuildEnabled Condition="'$(SkipFrontendBuild)' != 'true' And '$(DesignTimeBuild)' != 'true'">true</FrontendBuildEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="Frontend">
+    <FrontendInput Include="$(FrontendDir)src\**\*" />
+    <FrontendInput Include="$(FrontendDir)package.json;$(FrontendDir)package-lock.json;$(FrontendDir)tsconfig.json;$(FrontendDir)webpack.config.js" />
+  </ItemGroup>
+
+  <Target Name="NpmInstall"
+          Condition="'$(FrontendBuildEnabled)' == 'true' And !Exists('$(FrontendDir)node_modules')">
+    <Message Importance="high" Text="Frontend: installing npm dependencies in '$(FrontendDir)' ..." />
+    <Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
+  </Target>
+
+  <Target Name="BuildFrontend"
+          DependsOnTargets="NpmInstall"
+          Inputs="@(FrontendInput)"
+          Outputs="$(FrontendDist)index.html"
+          Condition="'$(FrontendBuildEnabled)' == 'true'">
+    <Message Importance="high" Text="Frontend: running 'npm run build' in '$(FrontendDir)' ..." />
+    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
+  </Target>
+
+  <Target Name="EmbedFrontend"
+          DependsOnTargets="BuildFrontend"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+
+    <Error Condition="!Exists('$(FrontendDist)index.html')"
+           Text="Frontend build output '$(FrontendDist)' is missing. Run 'npm run build' in '$(FrontendDir)' or drop -p:SkipFrontendBuild=true." />
+
+    <ItemGroup>
+      <_FrontendFile Include="$(FrontendDist)**\*" />
+      <EmbeddedResource Include="@(_FrontendFile)"
+                        LogicalName="$(FrontendResourcePrefix)$([System.String]::Copy('%(_FrontendFile.RecursiveDir)').Replace('\', '.').Replace('/', '.'))%(_FrontendFile.Filename)%(_FrontendFile.Extension)"
+                        WithCulture="false" />
+    </ItemGroup>
+
+    <Message Importance="high" Text="Frontend: embedding @(_FrontendFile->Count()) files from '$(FrontendDist)' as '$(FrontendResourcePrefix)*'." />
+
+  </Target>
+
+</Project>

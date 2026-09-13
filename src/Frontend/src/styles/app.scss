@@ -1,0 +1,746 @@
+// Design tokens
+$color-bg:          #f6f7f9;
+$color-surface:     #ffffff;
+$color-text:        #1f2933;
+$color-muted:       #616e7c;
+$color-accent:      #2f6fed;
+$color-accent-dark: #2158c9;
+$color-ok:          #1e7f4f;
+$color-warn:        #c98a1b;
+$color-error:       #b42318;
+$color-error-bg:    #fde8e6;
+$color-warn-bg:     #fff7e6;
+$color-border:      #d9dee5;
+$color-out:         #dbe7ff;
+$color-out-border:  #c3d4fb;
+
+$font-stack:        system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Color Emoji", sans-serif;
+$font-mono:         ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+$radius:            8px;
+$sidebar-width:     20rem;
+
+@mixin panel {
+    background:     $color-surface;
+    border:         1px solid $color-border;
+    border-radius:  $radius;
+}
+
+
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin:       0;
+    height:       100%;
+    background:   $color-bg;
+    color:        $color-text;
+    font-family:  $font-stack;
+    line-height:  1.45;
+}
+
+#app, .page {
+    height: 100%;
+}
+
+a {
+    color: $color-accent;
+    text-decoration: none;
+
+    &:hover {
+        text-decoration: underline;
+    }
+}
+
+code {
+    font-family: $font-mono;
+    font-size:   0.9em;
+}
+
+.muted {
+    color: $color-muted;
+}
+
+.small {
+    font-size: 0.85rem;
+}
+
+
+// Buttons and forms
+
+.btn {
+
+    display:         inline-flex;
+    align-items:     center;
+    gap:             0.4rem;
+    font:            inherit;
+    padding:         0.45rem 0.9rem;
+    border:          1px solid $color-border;
+    border-radius:   $radius;
+    background:      $color-surface;
+    color:           $color-text;
+    cursor:          pointer;
+    white-space:     nowrap;
+
+    &:hover {
+        border-color: $color-accent;
+        color:        $color-accent;
+    }
+
+    &:disabled {
+        opacity: 0.6;
+        cursor:  default;
+    }
+
+    &.primary {
+        background:    $color-accent;
+        border-color:  $color-accent;
+        color:         #ffffff;
+
+        &:hover {
+            background:    $color-accent-dark;
+            border-color:  $color-accent-dark;
+            color:         #ffffff;
+        }
+    }
+
+    &.danger:hover {
+        border-color:  $color-error;
+        color:         $color-error;
+    }
+
+    &.small {
+        padding: 0.3rem 0.55rem;
+    }
+
+}
+
+input, textarea, select {
+    font:           inherit;
+    color:          $color-text;
+    padding:        0.5rem 0.7rem;
+    border:         1px solid $color-border;
+    border-radius:  $radius;
+    background:     $color-surface;
+
+    &:focus {
+        outline:       2px solid rgba($color-accent, 0.35);
+        border-color:  $color-accent;
+    }
+}
+
+
+// The XMPP account page
+
+.account {
+
+    max-width:  36rem;
+    margin:     5vh auto 3rem;
+    padding:    0 1rem;
+
+    h1 {
+        font-size:   1.5rem;
+        margin-top:  0;
+
+        .fa-solid {
+            color:         $color-accent;
+            margin-right:  0.25rem;
+        }
+    }
+
+    > .muted {
+        margin-top: 0;
+    }
+
+    .card {
+
+        @include panel;
+
+        padding:  1.25rem 1.5rem;
+        margin:   1rem 0;
+
+        h2 {
+            margin-top:  0;
+            font-size:   1.1rem;
+        }
+
+    }
+
+    .form-notice {
+        color:      $color-ok;
+        font-size:  0.9rem;
+    }
+
+    .form-stack label.checkbox {
+        flex-direction:  row;
+        flex-wrap:       wrap;
+        align-items:     baseline;
+        gap:             0.15rem 0.5rem;
+        color:           $color-text;
+
+        input {
+            flex:  none;
+        }
+
+        .hint {
+            flex-basis:  100%;
+        }
+    }
+
+    .hint {
+        color:      $color-muted;
+        font-size:  0.8rem;
+        font-weight: 400;
+    }
+
+    .notice {
+        @include panel;
+        background:     $color-warn-bg;
+        border-color:  #f3d9a4;
+        padding:       0.6rem 0.8rem;
+        margin-bottom: 1rem;
+        font-size:     0.85rem;
+    }
+
+    .account-connection {
+
+        margin-top: 1rem;
+
+        .facts {
+            @include panel;
+            padding:  0.6rem 0.9rem;
+            display:  grid;
+            gap:      0.3rem;
+        }
+
+        .conn-error {
+            color:      $color-error;
+            font-size:  0.85rem;
+        }
+
+    }
+
+    .danger-zone {
+        margin-top:  1.5rem;
+        padding-top: 1rem;
+        border-top:  1px solid $color-border;
+        display:         flex;
+        align-items:     baseline;
+        gap:             0.75rem;
+        flex-wrap:       wrap;
+
+        .hint {
+            flex: 1;
+        }
+    }
+
+}
+
+.error-box {
+    @include panel;
+    border-color:  $color-error;
+    background:    $color-error-bg;
+    color:         $color-error;
+    padding:       0.75rem 1rem;
+    margin:        1rem 0;
+}
+
+.form-stack {
+
+    display:         flex;
+    flex-direction:  column;
+    gap:             0.85rem;
+
+    label {
+        display:         flex;
+        flex-direction:  column;
+        gap:             0.3rem;
+        font-size:       0.85rem;
+        color:           $color-muted;
+    }
+
+    .form-actions {
+        display:      flex;
+        align-items:  center;
+        gap:          0.75rem;
+        flex-wrap:    wrap;
+        margin-top:   0.25rem;
+    }
+
+}
+
+.form-error {
+    color:      $color-error;
+    font-size:  0.9rem;
+
+    &:empty {
+        display: none;
+    }
+}
+
+
+// Sign-in
+
+.login {
+
+    @include panel;
+
+    max-width:  24rem;
+    margin:     10vh auto 2rem;
+    padding:    1.5rem 1.75rem;
+
+    h1 {
+        font-size:   1.4rem;
+        margin-top:  0;
+
+        .fa-solid {
+            color:         $color-accent;
+            margin-right:  0.25rem;
+        }
+    }
+
+}
+
+.dev-badge {
+    position:        fixed;
+    left:            0.75rem;
+    bottom:          0.5rem;
+    padding:         0.1rem 0.5rem;
+    border-radius:   999px;
+    background:      $color-error-bg;
+    color:           $color-error;
+    font-size:       0.7rem;
+    font-weight:     700;
+    text-transform:  uppercase;
+    letter-spacing:  0.05em;
+    z-index:         20;
+}
+
+
+// Presence
+
+.dot {
+
+    display:        inline-block;
+    width:          0.65rem;
+    height:         0.65rem;
+    border-radius:  50%;
+    background:     #9aa5b1;
+    flex:           none;
+
+    &.available, &.chat {
+        background: $color-ok;
+    }
+
+    &.away, &.xa {
+        background: $color-warn;
+    }
+
+    &.dnd {
+        background: $color-error;
+    }
+
+}
+
+
+// The chat layout
+
+.chat {
+    display:                grid;
+    grid-template-columns:  $sidebar-width 1fr;
+    height:                 100%;
+    overflow:               hidden;
+}
+
+.sidebar {
+    display:         flex;
+    flex-direction:  column;
+    min-height:      0;
+    background:      $color-surface;
+    border-right:    1px solid $color-border;
+}
+
+.me {
+
+    display:        flex;
+    align-items:    center;
+    gap:            0.5rem;
+    padding:        0.75rem 1rem;
+    border-bottom:  1px solid $color-border;
+
+    .me-info {
+        flex:       1;
+        min-width:  0;
+    }
+
+    .me-jid {
+        font-weight:    600;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+    }
+
+    .me-state {
+        display:      flex;
+        align-items:  center;
+        gap:          0.35rem;
+        font-size:    0.8rem;
+        color:        $color-muted;
+    }
+
+}
+
+.new-chat {
+
+    display:        flex;
+    gap:            0.4rem;
+    padding:        0.6rem 0.75rem;
+    border-bottom:  1px solid $color-border;
+
+    input {
+        flex:       1;
+        min-width:  0;
+        padding:    0.35rem 0.6rem;
+        font-size:  0.9rem;
+    }
+
+}
+
+.chat-list {
+
+    list-style:  none;
+    margin:      0;
+    padding:     0;
+    overflow-y:  auto;
+    flex:        1;
+
+    .chat-empty {
+        padding:    1rem;
+        font-size:  0.9rem;
+    }
+
+}
+
+.chat-item {
+
+    display:                grid;
+    grid-template-columns:  auto 1fr auto;
+    grid-template-rows:     auto auto;
+    column-gap:             0.6rem;
+    row-gap:                0.1rem;
+    align-items:            center;
+    padding:                0.6rem 0.9rem;
+    color:                  $color-text;
+    text-decoration:        none;
+    border-bottom:          1px solid #e6eaef;
+
+    &:hover {
+        background:       $color-bg;
+        text-decoration:  none;
+    }
+
+    &.active {
+        background: rgba($color-accent, 0.1);
+    }
+
+    .dot {
+        grid-row: 1 / span 2;
+    }
+
+    .chat-name {
+        font-weight:    600;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+    }
+
+    .chat-time {
+        font-size:  0.75rem;
+        color:      $color-muted;
+    }
+
+    .chat-preview {
+        grid-column:    2;
+        font-size:      0.85rem;
+        color:          $color-muted;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+
+        &.typing {
+            color:       $color-accent;
+            font-style:  italic;
+        }
+
+        &:empty::before {
+            content: "\00a0";
+        }
+    }
+
+    .chat-unread {
+        grid-column:    3;
+        justify-self:   end;
+        min-width:      1.4rem;
+        padding:        0 0.45rem;
+        border-radius:  999px;
+        background:     $color-accent;
+        color:          #ffffff;
+        font-size:      0.75rem;
+        font-weight:    600;
+        text-align:     center;
+    }
+
+}
+
+
+// The open conversation
+
+.conversation {
+    display:         flex;
+    flex-direction:  column;
+    min-height:      0;
+    min-width:       0;
+}
+
+.peer {
+
+    display:        flex;
+    align-items:    center;
+    gap:            0.75rem;
+    padding:        0.6rem 1rem;
+    background:     $color-surface;
+    border-bottom:  1px solid $color-border;
+    min-height:     3.5rem;
+
+    .back {
+        display: none;
+    }
+
+    .peer-info {
+        flex:       1;
+        min-width:  0;
+    }
+
+    .peer-name {
+        font-weight:    600;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+    }
+
+    .peer-meta {
+        font-size:      0.8rem;
+        color:          $color-muted;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+    }
+
+    .peer-actions {
+        display:      flex;
+        align-items:  center;
+        gap:          0.4rem;
+    }
+
+}
+
+.banner {
+
+    display:        flex;
+    align-items:    center;
+    gap:            0.75rem;
+    padding:        0.5rem 1rem;
+    font-size:      0.85rem;
+    background:     $color-warn-bg;
+    border-bottom:  1px solid #f3d9a4;
+
+    &.error {
+        background:    $color-error-bg;
+        border-color:  #f5c2bd;
+        color:         $color-error;
+    }
+
+    &:empty {
+        display: none;
+    }
+
+    .banner-text {
+        flex: 1;
+    }
+
+}
+
+.messages {
+
+    flex:            1;
+    overflow-y:      auto;
+    padding:         1rem;
+    display:         flex;
+    flex-direction:  column;
+    gap:             0.35rem;
+
+    .empty {
+        margin:      auto;
+        color:       $color-muted;
+        text-align:  center;
+    }
+
+    .day {
+        align-self:     center;
+        margin:         0.5rem 0;
+        padding:        0.1rem 0.7rem;
+        border-radius:  999px;
+        background:     $color-surface;
+        border:         1px solid $color-border;
+        color:          $color-muted;
+        font-size:      0.75rem;
+    }
+
+    // The way further back. Its height does not change while it is loading,
+    // so that the conversation does not move under somebody reading the top
+    // of it.
+    .history {
+        align-self:       center;
+        display:          flex;
+        align-items:      center;
+        justify-content:  center;
+        min-height:       2.1rem;
+        margin-bottom:    0.25rem;
+        color:            $color-muted;
+        font-size:        0.8rem;
+    }
+
+}
+
+.message {
+
+    max-width:      min(75%, 44rem);
+    padding:        0.45rem 0.7rem;
+    border-radius:  12px;
+    background:     $color-surface;
+    border:         1px solid $color-border;
+    align-self:     flex-start;
+
+    &.out {
+        align-self:    flex-end;
+        background:    $color-out;
+        border-color:  $color-out-border;
+    }
+
+    .body {
+
+        white-space:    pre-wrap;
+        overflow-wrap:  anywhere;
+
+        &.image img,
+        &.video video {
+            display:        block;
+            max-width:      100%;
+            max-height:     24rem;
+            border-radius:  8px;
+        }
+
+        &.audio audio {
+            display:     block;
+            max-width:   100%;
+            margin-top:  0.2rem;
+        }
+
+        // What the sender wrote beside the file they handed over.
+        .body-text {
+            margin-bottom: 0.35rem;
+        }
+
+    }
+
+    .meta {
+        margin-top:  0.15rem;
+        font-size:   0.7rem;
+        color:       $color-muted;
+        text-align:  right;
+    }
+
+}
+
+.composer {
+
+    display:      flex;
+    align-items:  flex-end;
+    gap:          0.5rem;
+    padding:      0.75rem 1rem;
+    background:   $color-surface;
+    border-top:   1px solid $color-border;
+
+    textarea {
+        flex:        1;
+        min-width:   0;
+        resize:      none;
+        min-height:  2.6rem;
+        max-height:  10rem;
+        line-height: 1.4;
+    }
+
+}
+
+
+// Notices
+
+.toasts {
+    position:        fixed;
+    right:           1rem;
+    bottom:          1rem;
+    display:         flex;
+    flex-direction:  column;
+    gap:             0.5rem;
+    z-index:         10;
+}
+
+.toast {
+
+    max-width:      24rem;
+    padding:        0.6rem 0.9rem;
+    border-radius:  $radius;
+    background:     $color-text;
+    color:          #ffffff;
+    font-size:      0.85rem;
+    box-shadow:     0 4px 16px rgba(0, 0, 0, 0.2);
+    cursor:         pointer;
+    overflow-wrap:  anywhere;
+
+    &.error {
+        background: $color-error;
+    }
+
+    &.warning {
+        background: #8a5a00;
+    }
+
+}
+
+
+// Narrow screens: either the list or the conversation
+
+@media (max-width: 720px) {
+
+    .chat {
+        grid-template-columns: 1fr;
+    }
+
+    .chat:not(.open) .conversation {
+        display: none;
+    }
+
+    .chat.open .sidebar {
+        display: none;
+    }
+
+    .peer .back {
+        display: inline-flex;
+    }
+
+    .message {
+        max-width: 88%;
+    }
+
+}

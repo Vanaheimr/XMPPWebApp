@@ -1,0 +1,38 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+TestResults/
+artifacts/
+
+# Frontend build output and dependencies
+node_modules/
+src/Frontend/dist/
+npm-debug.log*
+
+# Local logs
+*.log
+
+# The debugging profile passes JID and password on the command line - a
+# working account in plain text, one 'git add' away from the history.
+**/Properties/launchSettings.json
+
+# The XMPP account of this web app: JID, password and endpoint, written by
+# the account page. A working account in plain text, so never part of the
+# repository - the same rule as for launchSettings.json above.
+/xmpp-account.json
+
+# The login of the web page itself, written by the settings page. Only a
+# password hash, but still nobody else's business.
+/web-login.json
+
+# The chat archive: everything that was ever said, plus the files that were
+# shared. Written by the app, one directory per account and conversation.
+# The most private thing this program produces - never part of the repository.
+/chats/
