@@ -330,14 +330,31 @@ is refused when the browser says it came from another site.
   later, which nobody notices until a browser does. A load that fails changes
   nothing: a renewal caught halfway through writing a file leaves the
   certificate in force, says so once, and is tried again.
-- **The intermediate chain is not sent.** Hermod's
-  `ServerCertificateSelectorDelegate` hands over a single certificate and
-  `TCPConnection.GetOrCreateCertificateContext` passes `additionalCertificates:
-  null`, so only the leaf of a `fullchain.pem` reaches the client - and
-  `offline: true` stops the server fetching anything either. Browsers usually
-  cope, by a cached intermediate or by AIA; stricter clients do not. Until that
-  is opened up in Hermod, a Let's Encrypt deployment facing arbitrary clients
-  wants a reverse proxy in front of it.
+- **The intermediate chain is handed on.** A `fullchain.pem` is read whole:
+  the first certificate is the leaf, everything after it becomes
+  `additionalCertificates` on the `SslStreamCertificateContext`, which is what
+  RFC 8446 4.4.2 asks a server to send. A PKCS#12 holding more than one
+  certificate is taken apart the same way, the one with the private key being
+  this server's. A self-signed certificate is dropped rather than sent: a root
+  on the wire is bytes the client either already has or is not going to trust
+  because it arrived.
+
+  Saying that at all needed something new in Hermod, whose
+  `ServerCertificateSelectorDelegate` can only hand over a single certificate -
+  so `ServerCertificateChainSelector` was added beside it, and that is what
+  this program sets. What is verified there is the Hermod half: the selector is
+  asked for every accepted connection, it takes precedence over the narrow one,
+  and a handshake with intermediates completes.
+
+  What each platform then puts on the wire is deliberately not claimed here. On
+  Windows the intermediates did not appear in a local test, .NET apparently
+  withholding them when the chain does not validate to a locally trusted root -
+  and a client on the same machine cannot settle it either, because Schannel
+  builds its own chain: `ChainPolicy.ExtraStore` stays empty and `ChainElements`
+  shows what the machine could assemble, not what arrived. So a machine that has
+  just minted its own test intermediate finds it again whether or not the server
+  sent it. `openssl s_client -showcerts` against the real deployment is the one
+  honest check, and worth doing once after the first renewal.
 - **Over plain HTTP the cookie travels readable.** Use `--https`, `--cert` or
   `--cert-pem` for anything but a machine you sit at.
 
