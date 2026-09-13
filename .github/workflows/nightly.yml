@@ -1,0 +1,235 @@
+name: Nightly
+
+# The counterpart to ci.yml. That workflow gates a push against the submodule
+# PINS — the revisions of Hermod, Ratatoskr and Styx this commit says it was
+# built against. It is reproducible, and it is silent about the future: a pin
+# does not move on its own, so a breaking change upstream cannot turn it red.
+#
+# This one moves them. Every night the suite runs twice: once against the pins,
+# which catches a test that only fails sometimes and a runner image that has
+# drifted, and once against the tips of the three master branches, which is the
+# only thing that answers "would updating the submodules still build" on a day
+# when nobody pushed anything here at all. The second of those is informational
+# — see the job for why a red there must not be read the same way.
+#
+# Two things worth knowing about scheduled workflows: they only ever run on the
+# default branch, and GitHub disables them after 60 days without any repository
+# activity. If this stops reporting, that is the first thing to check.
+on:
+  schedule:
+    # 03:23 UTC. Not on the hour, because GitHub's scheduler is busiest then and
+    # delays runs by tens of minutes — and not at 02:17 either, which is when
+    # Hermod's own nightly runs: the tips job below would rather read a Hermod
+    # master that has already been tested than race the run that tests it.
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+
+  pinned:
+    # Exactly what the gate builds, run again on a schedule. Repeating it is
+    # worth the minutes for the two things a gate cannot see: a test that passes
+    # four times out of five, and a hosted runner image that changed under us.
+    # Fatal — a red here is a real regression.
+    #
+    # The same two-leg matrix as ci.yml, and for the same reasons: Schannel and
+    # CryptoAPI against OpenSSL for the certificate chain, and the Windows rules
+    # for file names that ChatArchivePaths exists to obey. See ci.yml.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            leg: windows-latest
+          - os: ubuntu-latest
+            container: debian:13
+            leg: debian-13-container
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+
+      # git before the checkout: without it actions/checkout downloads a tarball
+      # through the REST API and refuses submodules outright. See ci.yml.
+      - name: Install git and the .NET prerequisites (Debian container)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libicu76 libssl3t64 libstdc++6 tzdata xz-utils
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/Frontend/package-lock.json
+
+      - name: Install the frontend dependencies
+        working-directory: src/Frontend
+        run: npm ci
+
+      - name: Typecheck the frontend
+        working-directory: src/Frontend
+        run: npm run typecheck
+
+      - name: Test the frontend
+        working-directory: src/Frontend
+        run: npm test
+
+      # The bundle before either dotnet build: EmbedFrontend errors on a missing
+      # dist/ even when SkipFrontendBuild turns the webpack run off. See ci.yml.
+      - name: Build the frontend bundle
+        working-directory: src/Frontend
+        run: npm run build
+
+      - name: Build
+        run: dotnet build src/XMPPWebApp/XMPPWebApp.csproj --configuration Release
+
+      - name: Build the tests
+        run: dotnet build src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj --configuration Release
+
+      - name: Test
+        timeout-minutes: 30
+        run: dotnet test src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal" --logger "trx;LogFileName=${{ matrix.leg }}.trx" --results-directory artifacts
+
+      # Both package managers, once, on one leg only: the answer does not depend
+      # on the operating system, and printing it twice would only make a night
+      # look like it found two of everything. Informational on purpose — an
+      # advisory published overnight is news, not a regression, and it must not
+      # be able to turn a night red before anybody has read it.
+      - name: Known vulnerabilities (informational)
+        if: ${{ matrix.leg == 'debian-13-container' && !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          {
+            echo '## Known vulnerabilities (informational)'
+            echo
+            echo '### NuGet'
+            echo '```'
+            dotnet list src/XMPPWebApp/XMPPWebApp.csproj package --vulnerable --include-transitive 2>&1 | tail -40
+            echo '```'
+            echo '### npm'
+            echo '```'
+            npm --prefix src/Frontend audit --audit-level=high 2>&1 | tail -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-pinned-${{ matrix.leg }}
+          path: artifacts/*.trx
+
+  submodule-tips:
+    # The same suite, against the tips of Hermod, Ratatoskr and Styx master
+    # instead of the pins. This is the job the nightly exists for: Hermod and
+    # Ratatoskr are written in the same hand as this program and move under it,
+    # and nothing else in this repository would notice a breaking change there
+    # until somebody ran `git submodule update --remote` by hand and lost an
+    # afternoon to it.
+    #
+    # continue-on-error, and the distinction is worth stating: a red here does
+    # not mean this commit is broken — it is still perfectly buildable against
+    # its pins, which is what ci.yml gates and what anybody cloning gets. It
+    # means the NEXT submodule bump has work in it. Letting that fail a night
+    # would teach everyone to stop reading nights.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            leg: windows-latest
+          - os: ubuntu-latest
+            container: debian:13
+            leg: debian-13-container
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+
+      - name: Install git and the .NET prerequisites (Debian container)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libicu76 libssl3t64 libstdc++6 tzdata xz-utils
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      # --remote follows the branch named on every entry in .gitmodules, which is
+      # master for all three and is named there precisely so that this means the
+      # same thing in every clone: without it --remote follows the default branch
+      # of the far side as recorded in refs/remotes/origin/HEAD — a local note
+      # taken once at clone time, not a question asked of the far side.
+      #
+      # safe.directory because the container runs as root over a checkout git
+      # would otherwise call dubiously owned, and then refuse to touch.
+      - name: Move the submodules to the tip of their branches
+        shell: bash
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --remote
+          {
+            echo '## Submodules at the tip of master (${{ matrix.leg }})'
+            echo
+            echo 'What this leg built against, measured against the pins in the commit.'
+            echo 'Empty means nothing upstream has moved since the pins were taken.'
+            echo
+            echo '```'
+            git diff --submodule=log -- libs/
+            echo '```'
+            echo
+            echo '```'
+            git submodule status
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/Frontend/package-lock.json
+
+      - name: Install the frontend dependencies
+        working-directory: src/Frontend
+        run: npm ci
+
+      # No typecheck and no node --test here: the frontend does not depend on the
+      # submodules at all, so running it again would answer a question the pinned
+      # job has already answered tonight. The bundle itself is still built,
+      # because the app build needs dist/ to embed.
+      - name: Build the frontend bundle
+        working-directory: src/Frontend
+        run: npm run build
+
+      - name: Build
+        run: dotnet build src/XMPPWebApp/XMPPWebApp.csproj --configuration Release
+
+      - name: Build the tests
+        run: dotnet build src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj --configuration Release
+
+      - name: Test
+        timeout-minutes: 30
+        run: dotnet test src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal" --logger "trx;LogFileName=${{ matrix.leg }}.trx" --results-directory artifacts
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-tips-${{ matrix.leg }}
+          path: artifacts/*.trx

@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  # Manual runs from the Actions tab ("Run workflow"), same as nightly.yml.
+  workflow_dispatch:
+
+concurrency:
+  # Pull requests: one run per branch, newest wins — a run against a head that
+  # has been superseded is answering a question nobody is asking any more.
+  #
+  # Pushes: one run per commit, and nothing cancels anything. A commit with no
+  # verdict is a hole nobody comes back to fill: the next commit contains it,
+  # so the code does get tested eventually, but once that run is red there is
+  # no longer any way to say which of the two commits did it.
+  #
+  # Keying the group on the SHA, rather than only turning cancel-in-progress
+  # off, is what makes that hold for more than two pushes: a group keeps at
+  # most one run *pending*, so a third push discards the second before it ever
+  # starts.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    # The two platforms this program actually meets: Windows, where it is
+    # written, and Debian 13, where it runs. GitHub offers no Debian runner
+    # image, so that leg is an Ubuntu runner with a bare debian:13 container —
+    # deliberately not the official .NET SDK image, which is still Debian 12.
+    #
+    # The difference is not cosmetic here. Two things in this repository are
+    # platform-dependent in a way the tests can see:
+    #
+    #  * The TLS certificate. RotatingCertificate reads PKCS#12 and PEM and
+    #    hands the chain to Hermod. A chain is built by Schannel and CryptoAPI
+    #    on Windows and by OpenSSL on Linux, and a PEM private key is ephemeral
+    #    — which is why it is round-tripped through PKCS#12 before SslStream is
+    #    allowed to see it at all. That round trip exists because of Windows;
+    #    only a Windows leg keeps it honest.
+    #  * The file names of the archive. ChatArchivePaths is there because a JID
+    #    is a stranger's text: reserved device names, trailing dots and spaces,
+    #    and the colon ISO 8601 would like to write a time with. All of those
+    #    are Windows problems that a Linux-only CI would never fail on.
+    #
+    # fail-fast is off on purpose: "red on exactly one platform" is the most
+    # valuable signal this matrix produces, so one leg must not cancel the other.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            leg: windows-latest
+          - os: ubuntu-latest
+            container: debian:13
+            leg: debian-13-container
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+
+      # Before the checkout, not after it, and git is the reason: with no git on
+      # the PATH, actions/checkout falls back to downloading a tarball through
+      # the REST API, and that mode cannot do submodules at all — it stops with
+      # "Input 'submodules' not supported when falling back to download using
+      # the GitHub REST API". The three libraries this program is built from ARE
+      # submodules, so the checkout below has to be a real clone.
+      #
+      # The rest is what a bare debian:13 needs before setup-dotnet can install
+      # the SDK: curl for the install script, ICU and tzdata for globalization,
+      # OpenSSL for crypto, ca-certificates for NuGet over HTTPS, and xz-utils
+      # because the Node tarball is .tar.xz and Debian's tar cannot unpack one on
+      # its own. Package names verified on Debian 13 (trixie).
+      - name: Install git and the .NET prerequisites (Debian container)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libicu76 libssl3t64 libstdc++6 tzdata xz-utils
+
+      # submodules: true rather than recursive — none of the three has submodules
+      # of its own. What this checks out are the PINS: the revisions of Hermod,
+      # Ratatoskr and Styx that this very commit says it was built against. That
+      # is the whole point of a gate, and also its blind spot, because a pin does
+      # not move on its own and a breaking change upstream can therefore never
+      # turn this red. nightly.yml is where the tips of those branches are tried.
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      # package.json asks for Node >= 22 and the apt package is older than that,
+      # so this cannot come out of the container's own repositories.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/Frontend/package-lock.json
+
+      - name: Install the frontend dependencies
+        working-directory: src/Frontend
+        run: npm ci
+
+      # tsc --noEmit, because webpack's ts-loader is not the whole compiler's
+      # opinion and a type error that only shows up in the bundler's log is a
+      # type error nobody reads.
+      - name: Typecheck the frontend
+        working-directory: src/Frontend
+        run: npm run typecheck
+
+      - name: Test the frontend
+        working-directory: src/Frontend
+        run: npm test
+
+      # The order of the next three steps is forced, and not by taste.
+      #
+      # XMPPWebApp.csproj embeds ../Frontend/dist as manifest resources, and its
+      # EmbedFrontend target stops with an error when that directory is missing.
+      # XMPPWebApp.Tests.csproj references the app with SkipFrontendBuild=true,
+      # which turns the npm and webpack targets off but NOT the embedding — so a
+      # fresh checkout that went straight to `dotnet test` would fail on the
+      # bundle it never built. Running `npm run build` here first makes the
+      # dependency explicit instead of hiding it inside an MSBuild log, and the
+      # app build below then finds BuildFrontend already up to date.
+      - name: Build the frontend bundle
+        working-directory: src/Frontend
+        run: npm run build
+
+      # Only these two projects, not the whole XMPPWebApp.slnx: the solution also
+      # carries HermodTests, RatatoskrTests and StyxTests, and those three suites
+      # are gated by their own repositories. What this gate owes is that the app
+      # and its tests build against the pinned libraries.
+      - name: Build
+        run: dotnet build src/XMPPWebApp/XMPPWebApp.csproj --configuration Release
+
+      - name: Build the tests
+        run: dotnet build src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj --configuration Release
+
+      # The console log answers "did it pass" and almost nothing else. TRX keeps
+      # per test what a red run is actually read for: outcome, duration, error
+      # message, stack trace and the reason behind a skip, which never reaches
+      # the console at normal verbosity at all. It also survives the run —
+      # `gh run download` gets structured results where the log view wants a
+      # signed-in browser.
+      #
+      # The frontend tests get no such file on purpose: node --test names the
+      # failing test and its assertion on the console, and 21 tests do not need
+      # an artifact to be read.
+      - name: Test
+        timeout-minutes: 20
+        run: dotnet test src/XMPPWebApp.Tests/XMPPWebApp.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal" --logger "trx;LogFileName=${{ matrix.leg }}.trx" --results-directory artifacts
+
+      # !cancelled() rather than success(): a red run is when these files matter
+      # most, so uploading only on green would throw the evidence away in exactly
+      # that case. A build that fails before the test step leaves no .trx, which
+      # upload-artifact reports as a warning rather than a second failure — the
+      # compile error is the finding there.
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.leg }}
+          path: artifacts/*.trx

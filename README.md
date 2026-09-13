@@ -1,5 +1,8 @@
 # XMPPWebApp
 
+[![CI](https://github.com/Vanaheimr/XMPPWebApp/actions/workflows/ci.yml/badge.svg)](https://github.com/Vanaheimr/XMPPWebApp/actions/workflows/ci.yml)
+[![Nightly](https://github.com/Vanaheimr/XMPPWebApp/actions/workflows/nightly.yml/badge.svg)](https://github.com/Vanaheimr/XMPPWebApp/actions/workflows/nightly.yml)
+
 An XMPP client as a web page: the same thing
 [XMPPConsole](https://github.com/Vanaheimr/XMPPConsole) is for the command
 line, only that you open it in a browser. The web app signs in to **one XMPP
@@ -426,6 +429,20 @@ fail the test.
 
 The protocol is not checked here. Its suite lives with
 [Ratatoskr](https://github.com/Vanaheimr/Ratatoskr), in the submodule.
+
+Both suites run on every push, on Windows and on Debian 13, against the
+submodule revisions this commit pins — that is what the CI badge stands for.
+The platforms are two because two things here are platform-dependent: a
+certificate chain is built by Schannel on the one and by OpenSSL on the other,
+and the rules a file name has to obey are Windows' rules.
+
+The nightly badge stands for something the gate cannot say. A pin does not move
+on its own, so no push can ever discover that Hermod or Ratatoskr has changed
+underneath this program. Once a night the suite therefore runs a second time
+with the submodules moved to the tip of their branches. That run is allowed to
+fail without failing the night: it does not mean this commit is broken — it
+builds against its pins, which is what anybody cloning gets — it means the next
+submodule bump has work in it.
 
 ## Repository layout
 
