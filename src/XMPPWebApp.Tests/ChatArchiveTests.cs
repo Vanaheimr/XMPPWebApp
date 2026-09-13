@@ -138,9 +138,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await archive.FlushAsync();
             }
 
-            var aliceSeptember  = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_202609.jsonl");
-            var aliceOctober    = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_202610.jsonl");
-            var bobSeptember    = Path.Combine(root, "me@example.org", "bob@example.org",   "bob@example.org_202609.jsonl");
+            var aliceSeptember  = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_2026-09.jsonl");
+            var aliceOctober    = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_2026-10.jsonl");
+            var bobSeptember    = Path.Combine(root, "me@example.org", "bob@example.org",   "bob@example.org_2026-09.jsonl");
 
             Assert.Multiple(() =>
             {
@@ -184,7 +184,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await archive.FlushAsync();
             }
 
-            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_202609.jsonl");
+            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_2026-09.jsonl");
 
             Assert.That(File.ReadAllLines(path), Has.Length.EqualTo(1));
 
@@ -257,7 +257,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             }
 
-            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_202609.jsonl");
+            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_2026-09.jsonl");
 
             Assert.That(File.ReadAllLines(path), Has.Length.EqualTo(3), "nothing was overwritten");
 
@@ -297,7 +297,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             }
 
-            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_202609.jsonl");
+            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_2026-09.jsonl");
 
             Assert.That(File.ReadAllLines(path), Has.Length.EqualTo(2), "the repetition was dropped, the change was not");
 
@@ -513,8 +513,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             Assert.Multiple(() =>
             {
-                Assert.That(File.Exists(Path.Combine(root, "me@example.org",    "alice@example.org", "alice@example.org_202609.jsonl")), Is.True);
-                Assert.That(File.Exists(Path.Combine(root, "other@example.org", "alice@example.org", "alice@example.org_202609.jsonl")), Is.True);
+                Assert.That(File.Exists(Path.Combine(root, "me@example.org",    "alice@example.org", "alice@example.org_2026-09.jsonl")), Is.True);
+                Assert.That(File.Exists(Path.Combine(root, "other@example.org", "alice@example.org", "alice@example.org_2026-09.jsonl")), Is.True);
             });
 
             await using var reading = Open();
@@ -544,7 +544,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await archive.FlushAsync();
             }
 
-            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_202609.jsonl");
+            var path = Path.Combine(root, "me@example.org", "alice@example.org", "alice@example.org_2026-09.jsonl");
 
             File.AppendAllText(path, "{\"id\":\"m3\",\"body\":\"halb geschr");
 

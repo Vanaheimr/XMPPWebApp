@@ -79,7 +79,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         /// <summary>
         /// A file name may not grow past what the file system takes. 120 leaves
-        /// room for the "_yyyyMM.jsonl" that follows and stays well inside the
+        /// room for the "_yyyy-MM.jsonl" that follows and stays well inside the
         /// 255 bytes the usual file systems allow.
         /// </summary>
         private const Int32  MaxNameLength       = 120;
@@ -238,12 +238,21 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// <summary>
         /// What a month's file is called: the conversation, then the month.
         /// </summary>
+        /// <remarks>
+        /// The month is written the way ISO 8601 writes one, with the hyphen:
+        /// "2026-09", not "202609". The files beside it in media/ use the basic
+        /// form - "20260913T071848Z" - and that is not an inconsistency but the
+        /// only way round: a time needs a separator between its parts, ISO 8601
+        /// spells that ':', and a colon cannot be in a file name on Windows. So
+        /// the basic form is used exactly where a colon would otherwise be, and
+        /// the readable one everywhere else.
+        /// </remarks>
         public static String LogFileName(String          SafePeerName,
                                          DateTimeOffset  When)
 
             => String.Concat(SafePeerName,
                              "_",
-                             When.UtcDateTime.ToString("yyyyMM", CultureInfo.InvariantCulture),
+                             When.UtcDateTime.ToString("yyyy-MM", CultureInfo.InvariantCulture),
                              LogFileExtension);
 
         #endregion
@@ -272,11 +281,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             var stem       = name[..^LogFileExtension.Length];
             var underscore = stem.LastIndexOf('_');
 
-            if (underscore < 0 || stem.Length - underscore - 1 != 6)
+            if (underscore < 0 || stem.Length - underscore - 1 != 7)
                 return false;
 
             if (!DateTime.TryParseExact(stem[(underscore + 1)..],
-                                        "yyyyMM",
+                                        "yyyy-MM",
                                         CultureInfo.InvariantCulture,
                                         DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal,
                                         out var parsed))
