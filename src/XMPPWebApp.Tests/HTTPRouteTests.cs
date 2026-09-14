@@ -26,8 +26,10 @@ using NUnit.Framework;
 
 using Newtonsoft.Json.Linq;
 
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
 
 #endregion
@@ -146,23 +148,34 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             Directory.CreateDirectory(root);
 
-            Assert.That(WebLoginSettings.TryCreate(Username, Password, out var login, out var error), Is.True, error);
-
             log     = new Recorder();
 
             server  = await HTTPServer.StartNew(IPv4Address.Parse("127.0.0.1"));
 
             api     = new XMPPWebAPI(
                           server,
-                          new WebSessions(login!),
-                          new AccountFile (Path.Combine(root, "xmpp-account.json")),
-                          new WebLoginFile(Path.Combine(root, "web-login.json")),
-                          // Two attempts rather than ten: the point is the
-                          // answer at the line, and eight more PBKDF2
-                          // verifications do not make it truer.
-                          Throttle:       new LoginThrottle(Attempts: 2, Window: TimeSpan.FromMinutes(15)),
+                          new AccountFile(Path.Combine(root, "xmpp-account.json")),
+                          DataDirectory:  root,
                           LoggerFactory:  LoggerFactory.Create(builder => builder.AddProvider(log).SetMinimumLevel(LogLevel.Trace))
                       );
+
+            // The account database is an append-only log and has to be replayed
+            // before anything is asked of it - here it is empty, so this makes
+            // the files and nothing else.
+            await api.LoadDatabase();
+
+            Assert.That(await api.CreateUserIfNotExists(
+                                  User_Id.Parse(Username),
+                                  I18NString.Create(Username),
+                                  SimpleEMailAddress.Parse($"{Username}@localhost"),
+                                  Password:                  Password,
+                                  IsAuthenticated:           true,
+                                  SkipNewUserEMail:          true,
+                                  SkipNewUserNotifications:  true,
+                                  SkipDefaultNotifications:  true
+                              ),
+                        Is.Not.Null,
+                        "the one account this fixture signs in as");
 
             origin  = new Uri($"http://127.0.0.1:{server.TCPPort}/");
 
@@ -215,10 +228,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             => Browser.PutAsync(Path, new StringContent(JSON.ToString(), Encoding.UTF8, "application/json"));
 
+        /// <summary>
+        /// The sign-in is HTTPExtAPI's now: "/api/auth/login", and the field is
+        /// called "login" rather than "username" because it takes the e-mail
+        /// address just as well.
+        /// </summary>
         private static Task<HttpResponseMessage> SignIn(HttpClient Browser, String? WithPassword = null)
 
-            => PostJSON(Browser, "api/v1/auth/login",
-                        new JObject(new JProperty("username", Username),
+            => PostJSON(Browser, "api/auth/login",
+                        new JObject(new JProperty("login",    Username),
                                     new JProperty("password", WithPassword ?? Password)));
 
         private static async Task<String> ErrorOf(HttpResponseMessage Response)
@@ -302,43 +320,61 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         #region TooManyAttempts_Answer429_BeforeAnyHashing()
 
         /// <summary>
-        /// The ration, from outside. What it proves that a unit test cannot is
-        /// that the gate is in the handler and in front of the verification:
-        /// the refusal arrives without the half-second pause a wrong password
-        /// costs, which is the pause that only happens after a verification.
+        /// The ration, from outside.
         /// </summary>
+        /// <remarks>
+        /// The limiter belongs to HTTPExtAPI now and is a better one than the
+        /// one this application had: ten attempts a minute per address AND ten
+        /// per account, where this had ten a quarter of an hour per address and
+        /// nothing per account. What is asserted here is not that Hermod's
+        /// limiter works - Hermod tests that - but that it is reached through
+        /// this application's routes and that it sits in front of the
+        /// verification rather than behind it.
+        ///
+        /// The evidence for "in front" is the clock. A wrong password costs
+        /// 600 000 rounds of PBKDF2; a refusal that never gets that far costs a
+        /// dictionary lookup. If the order were the other way round the two
+        /// would take the same time.
+        /// </remarks>
         [Test]
         public async Task TooManyAttempts_Answer429_BeforeAnyHashing()
         {
 
             using var browser = Browser();
 
-            Assert.That((await SignIn(browser, "no")).StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), "one");
-            Assert.That((await SignIn(browser, "no")).StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), "two");
+            var firstStarted = DateTimeOffset.UtcNow;
+            var first        = await SignIn(browser, "no");
+            var hashingTook  = DateTimeOffset.UtcNow - firstStarted;
 
-            var started  = DateTimeOffset.UtcNow;
-            var refused  = await SignIn(browser, "no");
-            var took     = DateTimeOffset.UtcNow - started;
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), "the first of ten");
+
+            for (var attempt = 2; attempt <= 10; attempt++)
+                Assert.That((await SignIn(browser, "no")).StatusCode,
+                            Is.EqualTo(HttpStatusCode.Unauthorized),
+                            $"attempt {attempt}");
+
+            var refusedStarted  = DateTimeOffset.UtcNow;
+            var refused         = await SignIn(browser, "no");
+            var refusalTook     = DateTimeOffset.UtcNow - refusedStarted;
 
             var retryAfter = refused.Headers.RetryAfter?.Delta;
 
             Assert.Multiple(() =>
             {
 
-                Assert.That(refused.StatusCode,  Is.EqualTo(HttpStatusCode.TooManyRequests));
+                Assert.That(refused.StatusCode,  Is.EqualTo(HttpStatusCode.TooManyRequests), "the eleventh");
 
                 Assert.That(retryAfter,          Is.Not.Null, "and it says when it is worth asking again");
                 Assert.That(retryAfter!.Value,   Is.GreaterThan(TimeSpan.Zero));
 
-                Assert.That(took,                Is.LessThan(XMPPWebAPI.FailedLoginDelay),
-                            "and it cost less than one wrong password does - the gate is in front of the work, not behind it");
+                Assert.That(refusalTook,         Is.LessThan(hashingTook),
+                            "and it cost less than a verification does, which is what puts the gate in front of the work");
 
             });
 
-            Assert.That(await ErrorOf(refused), Does.Contain("Too many"));
-
             // The right password does not buy its way past the ration either:
-            // what is rationed is the asking.
+            // what is rationed is the asking, and at the moment of asking nobody
+            // knows yet whether the password is right.
             Assert.That((await SignIn(browser)).StatusCode,
                         Is.EqualTo(HttpStatusCode.TooManyRequests));
 
@@ -550,6 +586,77 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AStream_DoesNotKeepItsOwnSessionAlive()
+
+        /// <summary>
+        /// The subtlest of the session rules, and the reason the event stream
+        /// asks a question of its own instead of reusing the one every other
+        /// route asks.
+        /// </summary>
+        /// <remarks>
+        /// A lookup in the session store slides the idle timeout - that is what
+        /// makes "twelve hours without use" mean anything. A stream that checked
+        /// itself that way would renew its own session for every event it
+        /// carried, and a chat that kept arriving would hold the session open
+        /// for as long as the browser stayed open, or as long as nobody closed
+        /// the laptop lid. So the stream reads and does not touch.
+        ///
+        /// Both halves are asserted, because one without the other proves
+        /// nothing: a store that never renewed anything would pass the first
+        /// assertion and be broken.
+        /// </remarks>
+        [Test]
+        public async Task AStream_DoesNotKeepItsOwnSessionAlive()
+        {
+
+            using var browser = Browser();
+
+            await SignIn(browser);
+
+            DateTimeOffset ExpiryOfTheOneSession()
+                => api!.Sessions.First().ExpiresAt;
+
+            var whenSignedIn = ExpiryOfTheOneSession();
+
+            using var listener = new Listener(browser);
+
+            // Something for the stream to carry: an account pointed at a closed
+            // port, which fails and retries and says so every time.
+            var saved = await PutJSON(browser, "api/v1/account",
+                                      new JObject(new JProperty("jid",       "alice@example.org"),
+                                                  new JProperty("password",  "s3cr3t-on-file"),
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws")));
+
+            Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
+
+            Assert.That(await listener.WaitForMoreThanAsync(2, TimeSpan.FromSeconds(20)),
+                        Is.True,
+                        "several events went through the stream");
+
+            // The PUT above was an ordinary request and renewed the session, so
+            // what is compared is from after it.
+            var beforeTheEvents = ExpiryOfTheOneSession();
+
+            Assert.That(await listener.WaitForMoreThanAsync(listener.Count + 2, TimeSpan.FromSeconds(20)),
+                        Is.True,
+                        "and two more after that");
+
+            Assert.That(ExpiryOfTheOneSession(),
+                        Is.EqualTo(beforeTheEvents),
+                        "carrying events did not buy the session another twelve hours");
+
+            // The other half: an ordinary request is use, and use is what the
+            // idle timeout measures.
+            Assert.That((await browser.GetAsync("api/v1/status")).StatusCode, Is.EqualTo(HttpStatusCode.OK));
+
+            Assert.That(ExpiryOfTheOneSession(),
+                        Is.GreaterThan(whenSignedIn),
+                        "while a request does move it along");
+
+        }
+
+        #endregion
+
         #region ARevokedSession_StopsReceivingEvents()
 
         /// <summary>
@@ -610,7 +717,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             var seenBeforeSignOut = listenGoes.Count;
 
-            var out_ = await goes.PostAsync("api/v1/auth/logout", null);
+            var out_ = await goes.PostAsync("api/auth/logout", null);
 
             Assert.That(out_.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.NoContent));
 

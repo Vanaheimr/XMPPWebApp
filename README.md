@@ -62,11 +62,12 @@ that talks to it.
   change the account or reconnect.
 - **One login for the page, configurable too.** Whoever opens the site sees a
   username and password form. A correct pair gets an HttpOnly session cookie,
-  and with it the settings page and the chats. The login is kept in a file of
-  its own, as a PBKDF2 hash rather than a password, and is changed on the same
-  settings page; changing it ends every other session. A first start that finds
-  no file makes a password up, prints it on the console once, and keeps only
-  its hash.
+  and with it the settings page and the chats. The accounts are Hermod's
+  `HTTPExtAPI`: its database, its sign-in, its password rules — a PBKDF2 hash
+  and never a password — and its passkey support waiting behind one setting.
+  This program makes exactly one account on its first start, prints the password
+  once on the console, and offers no sign-up. The password is changed on the
+  settings page, which ends every other session.
 - **A Jabber client's screen.** Contacts and conversations on the left, sorted
   by their last activity, with presence, status text, an unread badge and a
   typing indicator. The open conversation on the right, with day separators,
@@ -130,8 +131,8 @@ If you already cloned without them:
 git submodule update --init
 ```
 
-Nothing has to be edited before the first run: both the web login and the
-XMPP account are set up in the browser. Build and run — the first
+Nothing has to be edited before the first run: the account of the page is made
+at the first start and the XMPP account is set up in the browser. Build and run — the first
 `dotnet build` runs `npm ci` and `npm run build` for you and embeds the bundle
 into the assembly; the frontend is rebuilt whenever one of its inputs
 changed.
@@ -149,10 +150,11 @@ The first start finds no web login and makes one up, printing it once:
 ```
 
 Open <http://127.0.0.1:8080/>, sign in with that, and — on a fresh start — the
-settings page opens. Change the web login there to something you can remember;
+settings page opens. Change the password there to something you can remember;
 below it the XMPP account is waiting. Enter the JID, password and, optionally,
-the WebSocket endpoint, save, and the chats appear. The settings are written to
-`xmpp-account.json` and `web-login.json` in the per-user application data
+the WebSocket endpoint, save, and the chats appear. The XMPP account is written
+to `xmpp-account.json` and the accounts of the page to their own database, both
+in the per-user application data
 directory — `%LOCALAPPDATA%\XMPPWebApp` on Windows, `~/.local/share/XMPPWebApp`
 elsewhere — so the next start goes straight to the chat. They used to live below
 the repository root; a checkout that still has them there keeps working and says
@@ -178,7 +180,6 @@ dotnet run --project src\XMPPWebApp\XMPPWebApp.csproj -- --jid user@example.org 
 | `--key-pem <file>` | its private key, e.g. `privkey.pem`; without it the key is expected in the certificate file itself |
 | `--dev [<dir>]` | serve the frontend from the webpack output directory on disk (default `src/Frontend/dist`) and reload the page whenever it changes, see [Development](#development) |
 | `--account <file>` | where the account settings live (default: `xmpp-account.json` in the application data directory); the settings page reads and writes this file |
-| `--web-login <file>` | where the web login lives (default: `web-login.json` there too). Without it a password is made up at the first start and shown once |
 | `--archive <dir>` | where the conversations are kept (default: `chats/` there as well) |
 | `--no-archive` | keep nothing: what is said is gone when the process is |
 | `--no-media` | write the conversations, but do not fetch the files shared in them |
@@ -254,16 +255,22 @@ month files, hands over a page and says whether there is more; the browser
 prepends it and puts the scroll position back where it was, so that the line
 somebody was reading stays under their eyes.
 
-The **JSON API** below `/api/v1`:
+The accounts are **`HTTPExtAPI`'s**, below `/api` — not below `/v1`, because the
+version belongs to this application's own API and not to Hermod's:
 
 ```
-POST /auth/login            {"username","password"}     the session cookie, or 401
+POST /auth/login            {"login","password"}        the session cookie, or 401
 POST /auth/logout                                       ends the session
 GET  /auth/me                                           who is signed in
+PUT  /auth/me               {"displayName"}             rename yourself; the username does not change
+POST /auth/password         {"currentPassword",…}       change it; ends every other session
+```
+
+The **JSON API** of this application, below `/api/v1`:
+
+```
 GET  /status                                            the XMPP connection, contacts, chats, unread
 POST /connection/reconnect                              connect again after the client gave up
-GET  /weblogin                                          the username of the web login
-PUT  /weblogin              {"currentPassword",…}        change it; the current password is required
 GET  /account                                           the account without the password, and the connection
 PUT  /account               {"jid","password",…}        save the account, (re)connect; empty password keeps the stored one
 DELETE /account                                         forget the account, delete the file, disconnect
@@ -301,16 +308,19 @@ is refused when the browser says it came from another site.
   entry. An ACL on each file would have been the other way to fix it, and the
   worse one: it covers what this program writes and nothing else, while the
   directory decides for everything that ever lands beside it.
-- **The web login is the whole of the page's own security.** One username, one
-  password — kept in `web-login.json` as a PBKDF2-SHA256 PHC string
-  (600 000 iterations), never in the clear, because this one only ever has to
-  be recognised. Username and password are always both examined, so neither can
-  be guessed before the other. Changing it asks for the current password and
-  ends every other session. A random 256-bit token in an
-  `HttpOnly; SameSite=strict` cookie, `secure` when the server speaks TLS.
-  Sessions end after 12 hours without use, after 7 days at the latest. A
-  failed sign-in waits half a second before it answers — which slows a person
-  at a form and nothing else, see the next point.
+- **The login of the page is the whole of its own security, and it is not this
+  program's code.** The accounts are Hermod's `HTTPExtAPI`: a PBKDF2-SHA256 PHC
+  string at 600 000 iterations, never a password in the clear, because this one
+  only ever has to be recognised; a hash computed even for a login nobody has,
+  so that the answer does not say whether an account exists; a random token in
+  an `HttpOnly; SameSite=strict` cookie, `secure` when the server speaks TLS.
+  Changing the password asks for the current one and ends every other session.
+
+  Two numbers are this program's own, because `HTTPExtAPI` leaves them open and
+  its defaults suit a service rather than a page holding somebody's chat
+  archive: a session ends after **12 hours** without use and after **7 days**
+  at the latest. Left alone it would be thirty days and no idle timeout at
+  all.
 - **Signing in is rationed, because verifying a password is expensive on
   purpose.** 600 000 rounds of PBKDF2 are what make the stored hash costly to
   attack offline, and the same number is what makes `POST /api/v1/auth/login`

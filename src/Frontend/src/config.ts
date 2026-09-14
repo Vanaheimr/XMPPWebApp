@@ -8,6 +8,8 @@ function meta(name: string): string | undefined {
 
 export const config = {
     apiBase:          meta('api-base')         ?? '/api/v1',
+    /** Where the accounts live: HTTPExtAPI's routes, which are not under /v1. */
+    authBase:         meta('auth-base')        ?? '/api',
     frontendVersion:  meta('frontend-version') ?? '?',
     serverVersion:    meta('server-version')   ?? '?',
     /** True when the server runs with --dev and offers /dev/reload. */

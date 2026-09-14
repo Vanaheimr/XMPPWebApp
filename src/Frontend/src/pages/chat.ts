@@ -341,7 +341,7 @@ class ChatView {
 
         const connection = store.connection;
 
-        this.meJid.textContent = connection?.jid ?? auth.user?.username ?? '';
+        this.meJid.textContent = connection?.jid ?? auth.user?.user.id ?? '';
 
         const state = connection?.state ?? 'connecting';
         const label = !store.streamConnected ? 'page offline, reconnecting …'

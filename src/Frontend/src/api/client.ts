@@ -40,22 +40,11 @@ export interface AccountResponse {
     connection:   Connection;
 }
 
-/** The login of the web page itself - the username, never the password. */
-export interface WebLogin {
-    username:        string;
-    /** where it is kept on the server */
-    file:            string;
-    /** how many other sessions a change ended */
-    sessionsEnded?:  number;
-}
-
-/** What the settings page sends to change the web login. */
-export interface WebLoginUpdate {
-    /** required: a session alone must not be able to take the page over */
+/** What the settings page sends to change the password of the account. */
+export interface PasswordUpdate {
+    /** required: a session alone must not be able to take the account over */
     currentPassword:  string;
-    username:         string;
-    /** blank keeps the password in force and changes only the username */
-    newPassword?:     string;
+    newPassword:      string;
 }
 
 /**
@@ -134,9 +123,10 @@ export interface Status {
 }
 
 /** Who is signed in to the web page. */
+/** The signed-in account, as HTTPExtAPI answers it. */
 export interface Me {
-    username:  string;
-    session:   { createdAt: string; expiresAt: string };
+    user:     { id: string; name?: string; passkeys?: number };
+    session:  { createdAt: string; expiresAt: string } | null;
 }
 
 export interface ChatList {
@@ -185,7 +175,7 @@ export function onUnauthorized(handler: () => void): void {
 }
 
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, base: string = config.apiBase): Promise<T> {
 
     const headers: Record<string, string> = { 'Accept': 'application/json' };
 
@@ -193,7 +183,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
         headers['Content-Type'] = 'application/json';
 
     // Same origin, so the session cookie travels with every request.
-    const response = await fetch(config.apiBase + path, {
+    const response = await fetch(base + path, {
                                method,
                                headers,
                                credentials: 'same-origin',
@@ -244,9 +234,13 @@ export const api = {
     eventsURL:  `${config.apiBase}/events`,
 
     auth: {
-        me:      ()                                     => request<Me>  ('GET',  '/auth/me'),
-        login:   (username: string, password: string)   => request<Me>  ('POST', '/auth/login', { username, password }),
-        logout:  ()                                     => request<void>('POST', '/auth/logout')
+        me:              ()                                  => request<Me>  ('GET',  '/auth/me',       undefined,                     config.authBase),
+        // "login" and not "username": HTTPExtAPI takes the e-mail address just
+        // as well, so the field is named after what it is for.
+        login:           (login: string, password: string)   => request<Me>  ('POST', '/auth/login',    { login, password },           config.authBase),
+        logout:          ()                                  => request<void>('POST', '/auth/logout',   undefined,                     config.authBase),
+        rename:          (displayName: string)               => request<Me>  ('PUT',  '/auth/me',       { displayName },               config.authBase),
+        changePassword:  (update: PasswordUpdate)            => request<void>('POST', '/auth/password', update,                        config.authBase)
     },
 
     status:     ()  => request<Status>('GET',  '/status'),
@@ -258,10 +252,7 @@ export const api = {
         forget:  ()                       => request<AccountResponse>('DELETE', '/account')
     },
 
-    webLogin: {
-        get:   ()                        => request<WebLogin>('GET', '/weblogin'),
-        save:  (login: WebLoginUpdate)   => request<WebLogin>('PUT', '/weblogin', login)
-    },
+
 
     /**
      * Where a file of a conversation is served from. Same origin, so the

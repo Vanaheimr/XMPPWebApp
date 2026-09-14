@@ -1,4 +1,4 @@
-import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type SaslMechanism, type WebLogin, type WebLoginUpdate } from '../api/client';
+import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Me, type SaslMechanism } from '../api/client';
 import { html, must, render } from '../html';
 import type { Page } from '../router';
 import { errorMessage, field } from '../ui';
@@ -30,11 +30,11 @@ export const accountPage: Page = {
         const loginArea = must<HTMLElement>(root, '#weblogin-area');
 
         let current: AccountResponse;
-        let webLogin: WebLogin;
+        let me: Me;
 
         try
         {
-            [current, webLogin] = await Promise.all([api.account.get(), api.webLogin.get()]);
+            [current, me] = await Promise.all([api.account.get(), api.auth.me()]);
         }
         catch (error)
         {
@@ -49,7 +49,7 @@ export const accountPage: Page = {
             void accountPage.render({ root, params: {}, url: new URL(location.href), navigate });
         });
 
-        renderWebLogin(loginArea, webLogin);
+        renderWebLogin(loginArea, me);
 
     }
 
@@ -215,22 +215,23 @@ function renderXMPP(area:      HTMLElement,
 // ---------------------------------------------------------------------------
 // The web login
 
-function renderWebLogin(area: HTMLElement, login: WebLogin): void {
+function renderWebLogin(area: HTMLElement, me: Me): void {
 
     render(area, html`
         <div class="card">
 
-            <h2>Web login</h2>
+            <h2>Your account</h2>
 
             <p class="muted small">
-                Who may open this page. Kept as a hash in <code>${login.file}</code>,
-                so a lost file does not hand anybody the password.
+                Who may open this page. The password is kept as a hash in the account
+                database, so a lost file does not hand anybody the password. The
+                username itself does not change - it is what the account is called.
             </p>
 
             <form id="weblogin-form" class="form-stack" autocomplete="off">
 
                 <label>Username
-                    <input name="username" required value="${login.username}" autocomplete="username" />
+                    <input name="username" value="${me.user.id}" autocomplete="username" disabled />
                 </label>
 
                 <label>Current password
@@ -238,14 +239,13 @@ function renderWebLogin(area: HTMLElement, login: WebLogin): void {
                     <span class="hint">Asked for every change: an open browser must not be able to lock you out.</span>
                 </label>
 
-                <label>New password <span class="muted">(optional)</span>
-                    <input name="newPassword" type="password" autocomplete="new-password"
-                           placeholder="Leave blank to change only the username" />
+                <label>New password
+                    <input name="newPassword" type="password" required autocomplete="new-password" />
                     <span class="hint">At least 8 characters. Changing it ends every other session.</span>
                 </label>
 
                 <div class="form-actions">
-                    <button type="submit" class="btn primary">Change the web login</button>
+                    <button type="submit" class="btn primary">Change the password</button>
                     <span id="weblogin-error" class="form-error" role="alert"></span>
                     <span id="weblogin-ok" class="form-notice" role="status"></span>
                 </div>
@@ -267,26 +267,17 @@ function renderWebLogin(area: HTMLElement, login: WebLogin): void {
         ok.textContent     = '';
         button.disabled    = true;
 
-        const update: WebLoginUpdate = {
-            currentPassword:  field(form, 'currentPassword', false),
-            username:         field(form, 'username')
-        };
-
-        const newPassword = field(form, 'newPassword', false);
-        if (newPassword.length > 0)
-            update.newPassword = newPassword;
-
         void (async () => {
             try
             {
-                const saved = await api.webLogin.save(update);
+                await api.auth.changePassword({
+                          currentPassword:  field(form, 'currentPassword', false),
+                          newPassword:      field(form, 'newPassword',     false)
+                      });
 
                 form.reset();
-                must<HTMLInputElement>(form, 'input[name="username"]').value = saved.username;
 
-                ok.textContent = saved.sessionsEnded
-                                     ? `Saved. ${saved.sessionsEnded} other session(s) ended.`
-                                     : 'Saved.';
+                ok.textContent = 'Changed. Every other session has ended.';
             }
             catch (problem)
             {

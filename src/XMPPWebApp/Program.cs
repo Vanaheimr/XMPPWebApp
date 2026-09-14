@@ -17,11 +17,14 @@
 
 #region Usings
 
+using System.Security.Cryptography;
+
 using Microsoft.Extensions.Logging;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Chats;
 
@@ -36,6 +39,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
     /// </summary>
     internal static class Program
     {
+
+        /// <summary>
+        /// The account a first start makes for itself. One person runs this and
+        /// signs in to it; further accounts are the account database's business
+        /// and not this program's.
+        /// </summary>
+        public const String DefaultUsername = "admin";
+
 
         /// <summary>
         /// The manifest resource prefix of the embedded frontend bundle
@@ -59,7 +70,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             String?  certificatePEM     = null;
             String?  keyPEM             = null;
             String?  accountFilePath    = null;
-            String?  webLoginFilePath   = null;
             String?  archiveDirectory   = null;
             var      keepArchive        = true;
             var      keepMedia          = true;
@@ -134,14 +144,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                         if (!TryTakeValue(Arguments, ref i, out accountFilePath))
                         {
                             Console.Error.WriteLine("Missing file after --account!");
-                            return 2;
-                        }
-                        break;
-
-                    case "--web-login":
-                        if (!TryTakeValue(Arguments, ref i, out webLoginFilePath))
-                        {
-                            Console.Error.WriteLine("Missing file after --web-login!");
                             return 2;
                         }
                         break;
@@ -347,49 +349,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             #endregion
 
-            #region The web login: the file, or one made up for a first start
-
-            var webLoginFile = new WebLoginFile(webLoginFilePath ?? PrivatePaths.For(WebLoginFile.DefaultFileName,     RepositoryRoot(), PrivatePaths.Directory(), movedPaths));
-
-            WebLoginSettings  webLogin;
-            String?           generatedPassword  = null;
-
-            if (webLoginFile.TryLoad(out var loadedLogin, out var webLoginError) && loadedLogin is not null)
-                webLogin = loadedLogin;
-
-            else if (webLoginError is not null)
-            {
-                // A login file that is there but unreadable is not something to
-                // paper over with a new password: that would lock out whoever
-                // owns the old one without saying why.
-                Console.Error.WriteLine($"Error: {webLoginError}");
-                Console.Error.WriteLine($"Repair or remove '{webLoginFile.Path}' and start again.");
-                return 1;
-            }
-
-            else
-            {
-
-                // A first start: nobody can sign in to a page whose login is not
-                // set yet, and an unauthenticated setup page would be a door of
-                // its own. So the password is made up here and shown once, on
-                // the console, to whoever started the process.
-                (webLogin, generatedPassword) = WebLoginSettings.Generate();
-
-                try
-                {
-                    webLoginFile.Save(webLogin);
-                }
-                catch (Exception e)
-                {
-                    Console.Error.WriteLine($"The web login could not be written to '{webLoginFile.Path}': {e.Message}");
-                    return 1;
-                }
-
-            }
-
-            #endregion
-
             #region Logging
 
             using var loggerFactory = LoggerFactory.Create(builder => {
@@ -464,11 +423,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             #region Start the HTTP server
 
-            var sessions    = new WebSessions(
-                                  webLogin,
-                                  SecureCookies: useTLS
-                              );
-
             var httpServer  = await HTTPServer.StartNew(
                                   anyAddress
                                       ? IPvXAddress.Any
@@ -499,16 +453,62 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             //    page can replace it at runtime.
             var api = new XMPPWebAPI(
                           httpServer,
-                          sessions,
                           accountFile,
-                          webLoginFile,
                           startupSettings,
                           startupSource,
                           Version:        version,
                           Archive:        archive,
                           HistoryWindow:  TimeSpan.FromDays(historyDays),
+                          DataDirectory:  PrivatePaths.Directory(),
+                          SecureCookies:  useTLS,
                           LoggerFactory:  loggerFactory
                       );
+
+            // The account database is an append-only log of what was ever done
+            // to it - users, passwords, sessions, passkeys - and it has to be
+            // replayed before the first request is answered.
+            await api.LoadDatabase();
+
+            String? generatedPassword = null;
+
+            if (!api.Users.Any())
+            {
+
+                // A first start: nobody can sign in to a page whose login is not
+                // set yet, and an unauthenticated setup page would be a door of
+                // its own. So the password is made up here and shown once, on
+                // the console, to whoever started the process.
+                //
+                // 24 characters of Base64Url: long enough that nobody guesses
+                // it, short enough that somebody can type it off a console.
+                generatedPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(18)).
+                                            Replace('+', '-').
+                                            Replace('/', '_').
+                                            TrimEnd('=');
+
+                // An e-mail address is asked for and this program has no use for
+                // one: there is nothing here that writes mail, and
+                // DisableNotifications means nothing ever will. So it names the
+                // machine, and the account is marked authenticated because no
+                // confirmation can arrive for an address nobody reads.
+                var created = await api.CreateUserIfNotExists(
+                                        User_Id.Parse(DefaultUsername),
+                                        I18NString.Create(DefaultUsername),
+                                        SimpleEMailAddress.Parse($"{DefaultUsername}@localhost"),
+                                        Password:                  generatedPassword,
+                                        IsAuthenticated:           true,
+                                        SkipNewUserEMail:          true,
+                                        SkipNewUserNotifications:  true,
+                                        SkipDefaultNotifications:  true
+                                    );
+
+                if (created is null)
+                {
+                    Console.Error.WriteLine($"The first account could not be created in '{PrivatePaths.Directory()}'.");
+                    return 1;
+                }
+
+            }
 
             // What was said before this start, back into the chat store: the
             // first browser to look then sees a conversation and not a blank
@@ -559,7 +559,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine($"  frontend from  {content.Description}");
             Console.WriteLine($"  JSON API at    {origin}{api.RootPath.ToString().TrimEnd('/')}/v1/status");
             Console.WriteLine($"  events         {origin}{api.RootPath.ToString().TrimEnd('/')}/v1/events");
-            Console.WriteLine($"  web login      user '{sessions.Username}', cookie '{sessions.CookieName}', {webLoginFile.Path}");
+            Console.WriteLine($"  accounts       {api.Users.Count()} in {PrivatePaths.Directory()}, sign-in at {origin}{api.RootPath.ToString().TrimEnd('/')}/auth/login");
             Console.WriteLine($"  account file   {accountFile.Path}{(accountFile.Exists ? "" : " (not there yet)")}");
 
             if (archive is not null)
@@ -608,7 +608,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             {
                 Console.WriteLine();
                 Console.WriteLine("  ┌─ First start: there was no web login, so one was made up for you ─────────");
-                Console.WriteLine($"  │  user      {sessions.Username}");
+                Console.WriteLine($"  │  user      {DefaultUsername}");
                 Console.WriteLine($"  │  password  {generatedPassword}");
                 Console.WriteLine("  │  It is shown here once and kept only as a hash. Sign in with it and");
                 Console.WriteLine("  │  change it on the settings page.");
@@ -764,10 +764,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine($"  --history-days <n>  how much of the archive is loaded at a start (default: {ChatArchive.DefaultHistoryWindow.TotalDays:0});");
             Console.WriteLine("                      older messages are loaded when the page is scrolled up to them");
             Console.WriteLine();
-            Console.WriteLine("Web login:");
-            Console.WriteLine($"  --web-login <file>  where the web login lives (default: {WebLoginFile.DefaultFileName} below");
-            Console.WriteLine($"                      {PrivatePaths.Directory()}); the settings page reads and writes it.");
-            Console.WriteLine("                      Without it a password is made up at the first start and shown once.");
+            Console.WriteLine("Accounts:");
+            Console.WriteLine($"  The accounts live in {PrivatePaths.Directory()}, in the database of");
+            Console.WriteLine($"  Hermod's HTTPExtAPI. A first start makes one - user '{DefaultUsername}' - and shows its");
+            Console.WriteLine("  password once. Change it on the settings page; sign-up is not offered.");
             Console.WriteLine();
             Console.WriteLine("XMPP account:");
             Console.WriteLine($"  --account <file>  where the account settings live (default: {AccountFile.DefaultFileName} below");

@@ -51,7 +51,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
     /// cookie. The XMPP side - the account, the client made from it, and which
     /// of its events end up where - lives in XMPPWebAPI.XMPP.cs.
     /// </remarks>
-    public sealed partial class XMPPWebAPI : HTTPAPI
+    public sealed partial class XMPPWebAPI : HTTPExtAPI
     {
 
         #region Data
@@ -65,6 +65,24 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// The identification of the Server-Sent Events source.
         /// </summary>
         public const           String    EventSourceName     = "chat";
+
+        /// <summary>
+        /// A session ends when it was not used for this long.
+        /// </summary>
+        /// <remarks>
+        /// Named here rather than left to HTTPExtAPI, whose sessions have no
+        /// idle timeout at all and last thirty days. That is a reasonable answer
+        /// for a service people sign in to from their own machines; it is the
+        /// wrong one for a page that holds somebody's chat archive open, where
+        /// the browser left behind is the likelier way in than the password.
+        /// </remarks>
+        public static readonly TimeSpan  SessionIdleTime     = TimeSpan.FromHours(12);
+
+        /// <summary>
+        /// A session ends this long after the sign-in at the latest, used or
+        /// not.
+        /// </summary>
+        public static readonly TimeSpan  SessionLifetime     = TimeSpan.FromDays(7);
 
         /// <summary>
         /// How long a failed sign-in waits before it answers. Not a lock-out,
@@ -94,17 +112,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// The version reported by the status resource.
         /// </summary>
         public String                    Version     { get; }
-
-        /// <summary>
-        /// The signed-in browsers.
-        /// </summary>
-        public WebSessions               Sessions    { get; }
-
-        /// <summary>
-        /// What it costs to try the web login - the only route here that does
-        /// expensive work for somebody who has not signed in yet.
-        /// </summary>
-        public LoginThrottle             Throttle    { get; }
 
         /// <summary>
         /// The conversations, as far as this process has seen them.
@@ -150,9 +157,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <param name="HistoryWindow">How much of the archive is loaded at a start.</param>
         /// <param name="LoggerFactory">An optional logger factory, handed on to every XMPP client.</param>
         public XMPPWebAPI(HTTPServer        HTTPServer,
-                          WebSessions       Sessions,
                           AccountFile       AccountFile,
-                          WebLoginFile      WebLoginFile,
                           AccountSettings?  Settings        = null,
                           AccountSource     Source          = AccountSource.None,
                           HTTPPath?         RootPath        = null,
@@ -160,12 +165,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                           ChatStore?        Chats           = null,
                           ChatArchive?      Archive         = null,
                           TimeSpan?         HistoryWindow   = null,
-                          LoginThrottle?    Throttle        = null,
+                          String            DataDirectory   = "",
+                          Boolean           SecureCookies   = false,
                           ILoggerFactory?   LoggerFactory   = null)
 
             : base(HTTPServer,
-                   RootPath:     RootPath ?? DefaultRootPath,
-                   Description:  I18NString.Create("XMPP WebApp JSON API"))
+                   RootPath:              RootPath ?? DefaultRootPath,
+                   Description:           I18NString.Create("XMPP WebApp JSON API"),
+
+                   // What this application does not have and does not want: the
+                   // HTML templates of the account pages - this front end is a
+                   // single-page application of its own - and the notification
+                   // machinery, which wants an SMTP submission client and an
+                   // e-mail address for a robot. Sign-up is a separate object
+                   // (SelfSignUpAPI) and is simply never made.
+                   SkipURLTemplates:      true,
+                   DisableNotifications:  true,
+
+                   LoggingPath:               DataDirectory,
+                   HTTPCookiePath:            "/",
+                   UseSecureCookies:          SecureCookies,
+
+                   MaxSignInSessionLifetime:  SessionLifetime,
+                   SessionIdleTimeout:        SessionIdleTime)
 
         {
 
@@ -173,14 +195,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                       ?? typeof(XMPPWebAPI).Assembly.GetName().Version?.ToString(3)
                                       ?? "0.0.0";
 
-            this.Sessions       = Sessions;
-
-            // Handed in by a test that would rather not spend eleven PBKDF2
-            // verifications and five seconds of pauses to reach the eleventh
-            // attempt.
-            this.Throttle       = Throttle ?? new LoginThrottle();
             this.AccountFile    = AccountFile;
-            this.WebLoginFile   = WebLoginFile;
             this.Chats          = Chats ?? new ChatStore();
             this.Archive        = Archive;
             this.HistoryWindow  = HistoryWindow ?? ChatArchive.DefaultHistoryWindow;
@@ -241,9 +256,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         private void RegisterURLTemplates()
         {
 
-            AddHandler(HTTPPath.Root + "v1/auth/login",               Login,          HTTPMethod.POST);
-            AddHandler(HTTPPath.Root + "v1/auth/logout",              Logout,         HTTPMethod.POST);
-            AddHandler(HTTPPath.Root + "v1/auth/me",                  Me,             HTTPMethod.GET);
+            // The sign-in, the sign-out and "who am I" are not registered
+            // here any more: they come from HTTPExtAPI as /api/auth/login,
+            // /api/auth/logout and /api/auth/me, together with the password
+            // change and - once WebAuthnSettings is set - the passkeys. What is
+            // left below is this application's own API, which is what the "v1"
+            // was ever a promise about.
 
             AddHandler(HTTPPath.Root + "v1/status",                   GetStatus,      HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/connection/reconnect",     Reconnect,      HTTPMethod.POST);
@@ -252,8 +270,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/account",                  PutAccount,     HTTPMethod.PUT);
             AddHandler(HTTPPath.Root + "v1/account",                  DeleteAccount,  HTTPMethod.DELETE);
 
-            AddHandler(HTTPPath.Root + "v1/weblogin",                 GetWebLogin,    HTTPMethod.GET);
-            AddHandler(HTTPPath.Root + "v1/weblogin",                 PutWebLogin,    HTTPMethod.PUT);
+            // The web login of this page used to be a route of its own here.
+            // It is HTTPExtAPI's now: GET and PUT /api/auth/me for the account
+            // itself, POST /api/auth/password to change the password.
 
             AddHandler(HTTPPath.Root + "v1/chats",                    ListChats,      HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/chats",                    OpenChat,       HTTPMethod.POST);
@@ -275,144 +294,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 AddHandler(HTTPPath.Root + "{path..}", UnknownPath, method);
 
         }
-
-        #endregion
-
-
-        #region (private) Login          (Request)
-
-        /// <summary>
-        /// POST /api/v1/auth/login with {"username", "password"}: the session
-        /// cookie, or 401 after a short pause.
-        /// </summary>
-        /// <remarks>
-        /// The only route here that does expensive work for somebody who has
-        /// not signed in: verifying the password is 600 000 rounds of PBKDF2,
-        /// and anybody who can reach the port can ask for them. Both gates
-        /// therefore sit in front of that work rather than behind it - see
-        /// <see cref="LoginThrottle"/> for why there are two of them and for
-        /// what the half second at the end is and is not.
-        /// </remarks>
-        private async Task<HTTPResponse> Login(HTTPRequest Request)
-        {
-
-            if (RefuseCrossSite(Request) is HTTPResponse refused)
-                return refused;
-
-            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
-                return errorResponse;
-
-            var source    = LoginThrottle.SourceOf(Request);
-            var decision  = Throttle.Ask(source);
-
-            if (!decision.Allowed)
-            {
-
-                logger.LogWarning("Web sign-in refused for {Remote}: out of attempts, {RetryAfter:0} seconds to the next one",
-                                  Request.RemoteSocket, decision.RetryAfter.TotalSeconds);
-
-                return RetryLaterJSON(Request,
-                                      HTTPStatusCode.TooManyRequests,
-                                      decision.RetryAfter,
-                                      "Too many sign-in attempts. Try again later.");
-
-            }
-
-            // Turned away rather than queued without end: whatever does not fit
-            // behind the ceiling is work this machine has no room for, and
-            // saying so costs nothing while doing it would cost a core.
-            if (!await Throttle.EnterVerifierAsync(Request.CancellationToken))
-            {
-
-                logger.LogWarning("Web sign-in refused for {Remote}: too many verifications at once", Request.RemoteSocket);
-
-                return RetryLaterJSON(Request,
-                                      HTTPStatusCode.ServiceUnavailable,
-                                      LoginThrottle.DefaultVerifierWait,
-                                      "Busy. Try again in a moment.");
-
-            }
-
-            Boolean  signedIn;
-            Session? session;
-
-            try
-            {
-                signedIn = Sessions.TryLogin(json.Value<String>("username"),
-                                             json.Value<String>("password"),
-                                             out session);
-            }
-            finally
-            {
-                Throttle.LeaveVerifier();
-            }
-
-            if (!signedIn || session is null)
-            {
-
-                logger.LogWarning("Web sign-in refused for {Remote}, {Remaining} attempt(s) left", Request.RemoteSocket, decision.RemainingTokens);
-
-                // Outside the ceiling above on purpose: this waits, it does not
-                // work, and a waiter holding a verifier slot would turn the
-                // pause into the very denial of service the slot is there to
-                // prevent.
-                await Task.Delay(FailedLoginDelay, Request.CancellationToken);
-
-                return ErrorJSON(Request, HTTPStatusCode.Unauthorized, "Wrong username or password.");
-
-            }
-
-            logger.LogInformation("Web sign-in of '{User}' from {Remote}", session.UserId, Request.RemoteSocket);
-
-            return new HTTPResponse.Builder(Request) {
-                       HTTPStatusCode  = HTTPStatusCode.OK,
-                       ContentType     = HTTPContentType.Application.JSON_UTF8,
-                       Content         = Encoding.UTF8.GetBytes(MeJSON(session).ToString(Formatting.None)),
-                       CacheControl    = "no-store",
-                       SetCookie       = Sessions.SessionCookie(session)
-                   }.WithCommonSecurityHeaders().AsImmutable;
-
-        }
-
-        #endregion
-
-        #region (private) Logout         (Request)
-
-        /// <summary>
-        /// POST /api/v1/auth/logout: ends the session and expires the cookie.
-        /// </summary>
-        private Task<HTTPResponse> Logout(HTTPRequest Request)
-        {
-
-            if (RefuseCrossSite(Request) is HTTPResponse refused)
-                return Task.FromResult(refused);
-
-            Sessions.SignOut(Request);
-
-            return Task.FromResult(
-                       new HTTPResponse.Builder(Request) {
-                           HTTPStatusCode  = HTTPStatusCode.NoContent,
-                           CacheControl    = "no-store",
-                           SetCookie       = Sessions.ExpiredCookie()
-                       }.WithCommonSecurityHeaders().AsImmutable
-                   );
-
-        }
-
-        #endregion
-
-        #region (private) Me             (Request)
-
-        /// <summary>
-        /// GET /api/v1/auth/me: who is signed in, or 401.
-        /// </summary>
-        private Task<HTTPResponse> Me(HTTPRequest Request)
-
-            => Task.FromResult(
-                   TryGetSession(Request, out var session, out var unauthorized)
-                       ? JSONResponse(Request, HTTPStatusCode.OK, MeJSON(session))
-                       : unauthorized
-               );
 
         #endregion
 
@@ -446,7 +327,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                new JProperty("contacts",          Client?.Roster.Items.Count ?? 0),
                                new JProperty("chats",             Chats.Count),
                                new JProperty("unread",            Chats.Unread),
-                               new JProperty("sessions",          Sessions.Store.Count),
+                               new JProperty("sessions",          Sessions.Count),
                                new JProperty("seq",               Chats.Sequence)
                            )
                        )
@@ -1119,7 +1000,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                        // Before the write, never after it: the
                                        // question is whether this event may be
                                        // handed over at all.
-                                       if (!Sessions.StillLive(token))
+                                       if (!StillLive(token))
                                        {
                                            logger.LogInformation("The event stream of {Client} ended: its session is gone.", clientId);
                                            await Events.Unsubscribe(clientId);
@@ -1200,31 +1081,70 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         #region (private) TryGetSession(Request, out Session, out Unauthorized)
 
         /// <summary>
-        /// The live session behind the request, or the 401 response - which
-        /// also expires a stale cookie, so that the browser stops sending it.
+        /// The live session behind the request's cookie, or the 401 to answer
+        /// with.
         /// </summary>
+        /// <remarks>
+        /// A thin name over <see cref="HTTPExtAPI.TryGetSignedInUser"/>, kept
+        /// because every route here asks the same question and because this API
+        /// wants the stronger promise: HTTPExtAPI can hand back a user without a
+        /// session - that is what its other ways in are for - and a route of
+        /// this application without a session has nothing to answer with, since
+        /// the session is what the event stream and the archive are keyed on.
+        /// </remarks>
         private Boolean TryGetSession(HTTPRequest                             Request,
                                       [NotNullWhen(true)]  out Session?       Session,
                                       [NotNullWhen(false)] out HTTPResponse?  Unauthorized)
         {
 
-            if (Sessions.TryGetSession(Request, out Session))
+            if (TryGetSignedInUser(Request, out _, out Session, out Unauthorized) &&
+                Session is not null)
             {
-                Unauthorized = null;
                 return true;
             }
 
-            var builder = new HTTPResponse.Builder(Request) {
-                              HTTPStatusCode  = HTTPStatusCode.Unauthorized,
-                              ContentType     = HTTPContentType.Application.JSON_UTF8,
-                              Content         = Encoding.UTF8.GetBytes(new JObject(new JProperty("error", "Sign in required.")).ToString(Formatting.None)),
-                              CacheControl    = "no-store"
-                          };
+            Session       = null;
+            Unauthorized ??= new HTTPResponse.Builder(Request) {
+                                 HTTPStatusCode  = HTTPStatusCode.Unauthorized,
+                                 ContentType     = HTTPContentType.Application.JSON_UTF8,
+                                 Content         = Encoding.UTF8.GetBytes(new JObject(new JProperty("error", "Sign in required.")).ToString(Formatting.None)),
+                                 CacheControl    = "no-store"
+                             }.WithCommonSecurityHeaders().AsImmutable;
 
-            if (Sessions.HasCookie(Request))
-                builder.SetCookie = Sessions.ExpiredCookie();
+            return false;
 
-            Unauthorized = builder.WithCommonSecurityHeaders().AsImmutable;
+        }
+
+        #endregion
+
+        #region (private) StillLive(Token)
+
+        /// <summary>
+        /// Whether the session with this token is still live - asked without
+        /// touching it.
+        /// </summary>
+        /// <remarks>
+        /// For the event stream, which holds a session open for hours instead of
+        /// asking once per request. It reads and does not write, because
+        /// SessionStore.TryGet slides the idle timeout on every lookup: a stream
+        /// that checked itself that way would renew its own session for every
+        /// event, and "twelve hours unused" would quietly become "twelve hours
+        /// after the browser was closed".
+        /// </remarks>
+        private Boolean StillLive(SecurityToken_Id Token)
+        {
+
+            if (Token.IsNullOrEmpty)
+                return false;
+
+            var now = Sessions.TimeProvider.GetUtcNow();
+
+            foreach (var session in Sessions)
+            {
+                if (session.Token == Token)
+                    return !session.IsExpired(now);
+            }
+
             return false;
 
         }
