@@ -420,6 +420,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return errorResponse;
 
+            // Before anything is read out of the body: a session that was left
+            // open must not be able to reconfigure the account it can read.
+            if (Unconfirmed(Request, json, out var unconfirmed))
+                return unconfirmed;
+
             var password    = json.Value<String>("password");
             var fromTheFile = String.IsNullOrEmpty(password);
 
@@ -484,6 +489,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             if (RefuseCrossSite(Request) is HTTPResponse refused)
                 return refused;
+
+            // A DELETE that carries a body is unusual and is the lesser oddity:
+            // the alternative is the confirmation in a query string, where it
+            // would end up in every log this request passes.
+            var json = new JObject();
+
+            if (Request.HTTPBodyAsUTF8String is { Length: > 0 } body)
+            {
+                try
+                {
+                    json = JObject.Parse(body);
+                }
+                catch (Exception)
+                {
+                    return ErrorJSON(Request, HTTPStatusCode.BadRequest, "Invalid JSON.");
+                }
+            }
+
+            if (Unconfirmed(Request, json, out var unconfirmed))
+                return unconfirmed;
 
             try
             {
@@ -1081,6 +1106,118 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Events.SubmitEvent(SubEvent, JSON).
                    ContinueWith(task => logger.LogWarning("Publishing a '{Event}' event failed: {Error}", SubEvent, task.Exception?.GetBaseException().Message),
                                 TaskContinuationOptions.OnlyOnFaulted);
+
+        }
+
+        #endregion
+
+        #region (private) Unconfirmed(Request, JSON, out Refusal)
+
+        /// <summary>
+        /// Whether this request carries a fresh proof that the person is still
+        /// there - the password of the account, or a passkey - and the 403 to
+        /// answer with when it does not.
+        /// </summary>
+        /// <remarks>
+        /// The session alone opens the chats, and that is what a session is for.
+        /// It must not also be enough to point this program's XMPP account at
+        /// another server or to delete it: a browser left open on a desk is the
+        /// likeliest way in here, likelier than the password, and those two are
+        /// the requests that cannot be undone by closing the tab again.
+        ///
+        /// So the two routes that reconfigure or forget the account ask once
+        /// more, in the same request. Not a confirmation that is remembered for
+        /// five minutes: remembering it means deciding what invalidates it, and
+        /// every answer to that is a new way to be wrong. Twice into the same
+        /// form is cheap, and for a passkey it is a fingerprint.
+        ///
+        /// <b>Which password.</b> The one of this page's account, not the XMPP
+        /// one. The XMPP password has a rule of its own, further down: it may
+        /// not follow a changed endpoint. The two are different questions - "are
+        /// you still there" and "may this secret go there" - and a request that
+        /// moves the account to another server has to answer both.
+        /// </remarks>
+        private Boolean Unconfirmed(HTTPRequest                            Request,
+                                    JObject                                JSON,
+                                    [NotNullWhen(true)] out HTTPResponse?  Refusal)
+        {
+
+            Refusal = null;
+
+            if (!TryGetSignedInUser(Request, out var user, out _, out _))
+            {
+                Refusal = ErrorJSON(Request, HTTPStatusCode.Unauthorized, "Sign in required.");
+                return true;
+            }
+
+            if (JSON["confirm"] is not JObject confirmation)
+                return NotConfirmed(Request, out Refusal);
+
+            // A password, which everybody has.
+            if (confirmation.Value<String>("password") is { Length: > 0 } password)
+            {
+
+                if (VerifyPassword(user.Id, password))
+                    return false;
+
+                Refusal = ErrorJSON(Request, HTTPStatusCode.Forbidden, "The password is wrong.");
+                return true;
+
+            }
+
+            // Or a passkey, which is a fingerprint rather than a password typed
+            // into a page for the second time.
+            if (confirmation["credential"] is JObject credential &&
+                WebAuthnSettings is not null)
+            {
+
+                if (!PasskeyCeremonies.TryTake(confirmation.Value<String>("ceremonyId") ?? "",
+                                               CeremonyType.Authentication,
+                                               out var ceremony))
+                {
+                    Refusal = ErrorJSON(Request, HTTPStatusCode.Forbidden, "The confirmation timed out or was already used; please try again.");
+                    return true;
+                }
+
+                if (!TryGetPasskey(credential.Value<String>("id") ?? "", out var owner, out var passkey) ||
+                    owner is null || passkey is null || owner.Id != user.Id)
+                {
+                    Refusal = ErrorJSON(Request, HTTPStatusCode.Forbidden, "That passkey does not belong to this account.");
+                    return true;
+                }
+
+                if (!WebAuthn.TryVerifyAuthentication(WebAuthnSettings, ceremony, credential, passkey, user.Id, out _, out var problem))
+                {
+                    Refusal = ErrorJSON(Request, HTTPStatusCode.Forbidden, problem);
+                    return true;
+                }
+
+                return false;
+
+            }
+
+            return NotConfirmed(Request, out Refusal);
+
+        }
+
+        /// <summary>
+        /// The 403 that asks for a confirmation, with a flag the page can act on
+        /// rather than a sentence it would have to read.
+        /// </summary>
+        private static Boolean NotConfirmed(HTTPRequest       Request,
+                                            out HTTPResponse  Refusal)
+        {
+
+            Refusal = JSONResponse(
+                          Request,
+                          HTTPStatusCode.Forbidden,
+                          new JObject(
+                              new JProperty("error",                  "Please confirm with your password or a passkey."),
+                              new JProperty("confirmationRequired",   true)
+                          )
+                      );
+
+            return true;
 
         }
 

@@ -9,7 +9,7 @@
 // answer - it registers the routes only when it can name an origin a browser
 // will accept - plus the browser's own two conditions below.
 
-import { api, type Me } from './api/client';
+import { api, type Confirmation, type Me } from './api/client';
 
 // ---------------------------------------------------------------------------
 // base64url
@@ -158,3 +158,40 @@ export async function signIn(login?: string): Promise<Me> {
 }
 
 export type { Ceremony };
+
+/**
+ * The same ceremony as a sign-in, asked of somebody who is already signed in.
+ * What it proves is not who they are - the session says that - but that they
+ * are still there, which is what the two account routes want before they act.
+ */
+export async function confirm(): Promise<Confirmation> {
+
+    const ceremony = await api.passkeys.loginOptions();
+
+    const got = await navigator.credentials.get({
+                          publicKey: withBuffers(ceremony.publicKey)
+                      }) as PublicKeyCredential | null;
+
+    if (got === null)
+        throw new Error('The authenticator did not answer.');
+
+    const response = got.response as AuthenticatorAssertionResponse;
+
+    return {
+        ceremonyId:  ceremony.ceremonyId,
+        credential:  {
+            id:        got.id,
+            rawId:     toBase64Url(got.rawId),
+            type:      got.type,
+            response:  {
+                clientDataJSON:     toBase64Url(response.clientDataJSON),
+                authenticatorData:  toBase64Url(response.authenticatorData),
+                signature:          toBase64Url(response.signature),
+                userHandle:         response.userHandle !== null
+                                        ? toBase64Url(response.userHandle)
+                                        : null
+            }
+        }
+    };
+
+}

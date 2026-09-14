@@ -1,5 +1,5 @@
-import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Me, type Passkey, type SaslMechanism } from '../api/client';
-import { passkeysPossible, register as registerPasskey } from '../passkeys';
+import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Confirmation, type Me, type Passkey, type SaslMechanism } from '../api/client';
+import { confirm as confirmWithPasskey, passkeysPossible, register as registerPasskey } from '../passkeys';
 import { html, must, render } from '../html';
 import type { Page } from '../router';
 import { errorMessage, field } from '../ui';
@@ -61,6 +61,28 @@ export const accountPage: Page = {
     }
 
 };
+
+
+/**
+ * What the two account routes ask for beside the session. A typed password when
+ * one was typed; otherwise a passkey, which is a fingerprint rather than the
+ * same password into the same page for the second time.
+ */
+async function confirmation(form: HTMLFormElement): Promise<Confirmation> {
+
+    const typed = field(form, 'confirm', false);
+
+    if (typed.length > 0)
+        return { password: typed };
+
+    if (passkeysPossible())
+        return await confirmWithPasskey();
+
+    // Neither: the server answers 403 and says what it wants, which is a better
+    // sentence than one invented here.
+    return { password: '' };
+
+}
 
 
 // ---------------------------------------------------------------------------
@@ -265,6 +287,16 @@ function renderXMPP(area:      HTMLElement,
                     <span id="form-error" class="form-error" role="alert"></span>
                 </div>
 
+                <label>Your password here
+                    <input name="confirm" type="password" autocomplete="current-password" />
+                    <span class="hint">
+                        The password of this page, not of the XMPP account. Asked before the
+                        account is changed or forgotten: a browser left open must not be able
+                        to point this somewhere else. Leave it blank to be asked for a passkey
+                        instead, if you have one.
+                    </span>
+                </label>
+
             </form>
 
             <div id="connection" class="account-connection"></div>
@@ -306,7 +338,7 @@ function renderXMPP(area:      HTMLElement,
         void (async () => {
             try
             {
-                const saved = await api.account.save(update);
+                const saved = await api.account.save(update, await confirmation(form));
 
                 // Configured now: the chat is where the live connection banner
                 // is, so that is where saving lands.
@@ -332,7 +364,7 @@ function renderXMPP(area:      HTMLElement,
         void (async () => {
             try
             {
-                await api.account.forget();
+                await api.account.forget(await confirmation(form));
                 forgotten();
             }
             catch (problem)

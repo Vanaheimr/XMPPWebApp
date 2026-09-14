@@ -239,6 +239,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                         new JObject(new JProperty("login",    Username),
                                     new JProperty("password", WithPassword ?? Password)));
 
+        /// <summary>
+        /// What the two account routes ask for beside the session: proof that
+        /// the person is still there.
+        /// </summary>
+        private static JObject Confirmation()
+            => new (new JProperty("password", Password));
+
         private static async Task<String> ErrorOf(HttpResponseMessage Response)
         {
 
@@ -401,28 +408,38 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             var saved = await PutJSON(browser, "api/v1/account",
                                       new JObject(new JProperty("jid",       "alice@example.org"),
                                                   new JProperty("password",  "s3cr3t-on-file"),
-                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws")));
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws"),
+                                                  new JProperty("confirm",   Confirmation())));
 
             Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
 
             // No password, another endpoint: this is the attack.
             var moved = await PutJSON(browser, "api/v1/account",
-                                      new JObject(new JProperty("jid",       "alice@example.org"),
-                                                  new JProperty("websocket", "wss://collector.example/ws"),
-                                                  new JProperty("minimumSasl", "PLAIN")));
+                                      new JObject(new JProperty("jid",         "alice@example.org"),
+                                                  new JProperty("websocket",   "wss://collector.example/ws"),
+                                                  new JProperty("minimumSasl", "PLAIN"),
+                                                  new JProperty("confirm",     Confirmation())));
 
-            Assert.Multiple(async () =>
+            // Awaited first and asserted after: an async lambda handed to the
+            // synchronous Assert.Multiple is an async void, and a failure inside
+            // one does not fail the test - it hangs the run. Learned the hard
+            // way, when the gate below turned this assertion red for the first
+            // time.
+            var movedSaid = await ErrorOf(moved);
+
+            Assert.Multiple(() =>
             {
-                Assert.That(moved.StatusCode,        Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(await ErrorOf(moved),    Does.Contain("collector.example"), "and it says where it would have gone");
+                Assert.That(moved.StatusCode,  Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(movedSaid,         Does.Contain("collector.example"), "and it says where it would have gone");
             });
 
             // The same endpoint without a password is still the convenience it
             // was meant to be.
             var kept = await PutJSON(browser, "api/v1/account",
-                                     new JObject(new JProperty("jid",       "alice@example.org"),
-                                                 new JProperty("websocket", "wss://127.0.0.1:1/ws"),
-                                                 new JProperty("minimumSasl", "SCRAM-SHA-1")));
+                                     new JObject(new JProperty("jid",         "alice@example.org"),
+                                                 new JProperty("websocket",   "wss://127.0.0.1:1/ws"),
+                                                 new JProperty("minimumSasl", "SCRAM-SHA-1"),
+                                                 new JProperty("confirm",     Confirmation())));
 
             Assert.That(kept.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(kept));
 
@@ -431,6 +448,73 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             Assert.That(account["account"]?.Value<String>("websocket"),
                         Is.EqualTo("wss://127.0.0.1:1/ws"));
+
+        }
+
+        #endregion
+
+        #region TheAccountRoutes_AskAgainBeforeTheyActs()
+
+        /// <summary>
+        /// A session opens the chats, and that is what a session is for. It must
+        /// not also be enough to point this program at another XMPP server or to
+        /// forget the account: those two cannot be undone by closing the tab,
+        /// and a browser left open on a desk is the likeliest way in here.
+        /// </summary>
+        [Test]
+        public async Task TheAccountRoutes_AskAgainBeforeTheyAct()
+        {
+
+            using var browser = Browser();
+
+            await SignIn(browser);
+
+            // Set one up, properly confirmed, so there is something to protect.
+            var saved = await PutJSON(browser, "api/v1/account",
+                                      new JObject(new JProperty("jid",       "alice@example.org"),
+                                                  new JProperty("password",  "s3cr3t-on-file"),
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws"),
+                                                  new JProperty("confirm",   Confirmation())));
+
+            Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
+
+            // No confirmation at all.
+            var bare = await PutJSON(browser, "api/v1/account",
+                                     new JObject(new JProperty("jid",       "alice@example.org"),
+                                                 new JProperty("password",  "s3cr3t-on-file"),
+                                                 new JProperty("websocket", "wss://127.0.0.1:2/ws")));
+
+            var bareJSON = JObject.Parse(await bare.Content.ReadAsStringAsync());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(bare.StatusCode,                              Is.EqualTo(HttpStatusCode.Forbidden));
+                Assert.That(bareJSON.Value<Boolean?>("confirmationRequired"), Is.True,
+                            "and it says so in a way the page can act on rather than a sentence it would have to read");
+            });
+
+            // A confirmation that is wrong.
+            var wrong = await PutJSON(browser, "api/v1/account",
+                                      new JObject(new JProperty("jid",       "alice@example.org"),
+                                                  new JProperty("password",  "s3cr3t-on-file"),
+                                                  new JProperty("websocket", "wss://127.0.0.1:2/ws"),
+                                                  new JProperty("confirm",   new JObject(new JProperty("password", "not-the-password")))));
+
+            Assert.That(wrong.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden));
+
+            // Deleting asks too, and the account is still there afterwards.
+            using var request = new HttpRequestMessage(HttpMethod.Delete, "api/v1/account");
+            var deleted       = await browser.SendAsync(request);
+
+            Assert.That(deleted.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), "forgetting the account is the one that cannot be undone");
+
+            var account = JObject.Parse(await (await browser.GetAsync("api/v1/account")).Content.ReadAsStringAsync());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(account["account"]?.Value<String>("websocket"),  Is.EqualTo("wss://127.0.0.1:1/ws"), "nothing moved");
+                Assert.That(account.Value<Boolean?>("configured"),           Is.True,                            "and nothing was forgotten");
+            });
 
         }
 
@@ -625,7 +709,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             var saved = await PutJSON(browser, "api/v1/account",
                                       new JObject(new JProperty("jid",       "alice@example.org"),
                                                   new JProperty("password",  "s3cr3t-on-file"),
-                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws")));
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws"),
+                                                  new JProperty("confirm",   Confirmation())));
 
             Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
 
@@ -705,15 +790,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             var saved = await PutJSON(stays, "api/v1/account",
                                       new JObject(new JProperty("jid",       "alice@example.org"),
                                                   new JProperty("password",  "s3cr3t-on-file"),
-                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws")));
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws"),
+                                                  new JProperty("confirm",   Confirmation())));
 
             Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
 
-            Assert.Multiple(async () =>
-            {
-                Assert.That(await listenGoes. WaitForMoreThanAsync(0, TimeSpan.FromSeconds(20)), Is.True, "the stream carries events while its session is live");
-                Assert.That(await listenStays.WaitForMoreThanAsync(0, TimeSpan.FromSeconds(20)), Is.True, "and so does the other one");
-            });
+            Assert.That(await listenGoes. WaitForMoreThanAsync(0, TimeSpan.FromSeconds(20)), Is.True, "the stream carries events while its session is live");
+            Assert.That(await listenStays.WaitForMoreThanAsync(0, TimeSpan.FromSeconds(20)), Is.True, "and so does the other one");
 
             var seenBeforeSignOut = listenGoes.Count;
 

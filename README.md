@@ -289,7 +289,7 @@ The **JSON API** of this application, below `/api/v1`:
 GET  /status                                            the XMPP connection, contacts, chats, unread
 POST /connection/reconnect                              connect again after the client gave up
 GET  /account                                           the account without the password, and the connection
-PUT  /account               {"jid","password",…}        save the account, (re)connect; empty password keeps the stored one
+PUT  /account               {"jid","password","confirm"} save the account, (re)connect; empty password keeps the stored one
 DELETE /account                                         forget the account, delete the file, disconnect
 GET  /chats                                             every conversation, most recent first
 POST /chats                 {"jid"}                     start a conversation
@@ -338,6 +338,21 @@ is refused when the browser says it came from another site.
   archive: a session ends after **12 hours** without use and after **7 days**
   at the latest. Left alone it would be thirty days and no idle timeout at
   all.
+- **A session opens the chats; it does not reconfigure the account.** The two
+  routes that cannot be undone by closing the tab — saving the XMPP account and
+  forgetting it — ask once more in the same request: the password of *this
+  page's* account, or a passkey, which is a fingerprint rather than the same
+  password typed into the same page a second time. A browser left open on a desk
+  is the likelier way in here than the password, and pointing this program at
+  another XMPP server is exactly what somebody who found one would want to do.
+  Not a confirmation that is remembered for five minutes: remembering it means
+  deciding what invalidates it, and every answer to that is a new way to be
+  wrong.
+
+  Note which password. The one of the page, not the XMPP one — the XMPP password
+  has a rule of its own above, that it may not follow a changed endpoint. The two
+  are different questions, "are you still there" and "may this secret go there",
+  and a request that moves the account to another server has to answer both.
 - **A passkey belongs to one name, so the name has to be decided before
   anything is offered.** Three things have to hold, and each is a limit somebody
   will meet. The relying party id has to be a *domain*: `127.0.0.1` is not one,

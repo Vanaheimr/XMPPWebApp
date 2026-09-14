@@ -54,6 +54,14 @@ export interface PasskeyCeremony {
     publicKey:   Record<string, unknown>;
 }
 
+/**
+ * Proof that whoever is asking is still at the keyboard, for the two account
+ * routes that cannot be undone by closing the tab. Either the password of this
+ * page's account - not the XMPP one - or a passkey assertion.
+ */
+export type Confirmation = { password: string }
+                         | { ceremonyId: string; credential: unknown };
+
 /** What the settings page sends to change the password of the account. */
 export interface PasswordUpdate {
     /** required: a session alone must not be able to take the account over */
@@ -277,8 +285,8 @@ export const api = {
 
     account: {
         get:     ()                       => request<AccountResponse>('GET',    '/account'),
-        save:    (account: AccountUpdate)  => request<AccountResponse>('PUT',    '/account', account),
-        forget:  ()                       => request<AccountResponse>('DELETE', '/account')
+        save:    (account: AccountUpdate, confirm: Confirmation)  => request<AccountResponse>('PUT',    '/account', { ...account, confirm }),
+        forget:  (confirm: Confirmation)                          => request<AccountResponse>('DELETE', '/account', { confirm })
     },
 
 

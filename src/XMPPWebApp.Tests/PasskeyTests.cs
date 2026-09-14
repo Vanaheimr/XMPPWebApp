@@ -504,6 +504,45 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region APasskey_ConfirmsAnAccountChange()
+
+        /// <summary>
+        /// The other thing a passkey is good for here: the two account routes
+        /// ask again before they act, and a fingerprint is a better answer than
+        /// a password typed into the same page for the second time.
+        /// </summary>
+        [Test]
+        public async Task APasskey_ConfirmsAnAccountChange()
+        {
+
+            using var authenticator = new SoftwareAuthenticator("localhost", rpOrigin);
+            using var browser       = Browser();
+
+            await SignIn(browser);
+            await Register(browser, authenticator);
+
+            // The same ceremony the sign-in uses; what it proves here is not who
+            // somebody is - the session already said that - but that they are
+            // still at the keyboard.
+            var (_, options) = await Call(browser, HttpMethod.Post, "api/auth/passkeys/login/options", []);
+
+            var (status, _) = await Call(browser, HttpMethod.Put, "api/v1/account",
+                                         new JObject(
+                                             new JProperty("jid",       "alice@example.org"),
+                                             new JProperty("password",  "s3cr3t-on-file"),
+                                             new JProperty("websocket", "wss://127.0.0.1:1/ws"),
+                                             new JProperty("confirm",   new JObject(
+                                                 new JProperty("ceremonyId",  options?.Value<String>("ceremonyId")),
+                                                 new JProperty("credential",  authenticator.Authenticate(options?["publicKey"]?.Value<String>("challenge") ?? ""))
+                                             ))
+                                         ));
+
+            Assert.That(status, Is.EqualTo(HttpStatusCode.OK), "the passkey confirmed the change");
+
+        }
+
+        #endregion
+
         #region WithoutASession_NothingIsRegistered()
 
         [Test]
