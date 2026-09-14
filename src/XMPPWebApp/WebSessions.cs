@@ -109,11 +109,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <param name="CookieName">The name of the session cookie.</param>
         /// <param name="IdleTimeout">A session ends when it was not used for this long; 12 hours by default.</param>
         /// <param name="MaximumLifetime">A session ends this long after the sign-in at the latest; 7 days by default.</param>
+        /// <param name="TimeProvider">Where the time comes from; the system clock unless a test hands in its own.</param>
         public WebSessions(WebLoginSettings  Login,
                            Boolean           SecureCookies     = false,
                            HTTPCookieName?   CookieName        = null,
                            TimeSpan?         IdleTimeout       = null,
-                           TimeSpan?         MaximumLifetime   = null)
+                           TimeSpan?         MaximumLifetime   = null,
+                           TimeProvider?     TimeProvider      = null)
         {
 
             this.Login          = Login ?? throw new ArgumentNullException(nameof(Login));
@@ -122,7 +124,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             this.Store          = new SessionStore(
                                       IdleTimeout:      IdleTimeout     ?? DefaultIdleTimeout,
-                                      MaximumLifetime:  MaximumLifetime ?? DefaultMaximumLifetime
+                                      MaximumLifetime:  MaximumLifetime ?? DefaultMaximumLifetime,
+                                      TimeProvider:     TimeProvider
                                   );
 
         }
@@ -198,6 +201,50 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             return TryGetToken(Request, out var token) &&
                    Store.TryGet(token, out Session);
+
+        }
+
+        #endregion
+
+        #region StillLive(Token)
+
+        /// <summary>
+        /// Whether the session with this token is still live - asked without
+        /// touching it.
+        /// </summary>
+        /// <remarks>
+        /// For the one place that holds a session open instead of asking once
+        /// per request: the event stream. Every other route asks
+        /// <see cref="TryGetSession"/> and is done; a stream lives for hours,
+        /// and what was true when it opened does not stay true - somebody signs
+        /// out, changes the web password, walks away long enough for the idle
+        /// timeout.
+        ///
+        /// Why this reads rather than reuses TryGetSession: a lookup there
+        /// slides the idle timeout. A stream that checked itself that way would
+        /// keep its own session alive, and "twelve hours unused" would quietly
+        /// become "twelve hours after the browser was closed", for as long as
+        /// anybody kept sending messages to it.
+        ///
+        /// A session that was ended is gone from the store and answers false
+        /// here. One that merely ran out of time is still in it until the next
+        /// lookup removes it, so the expiry is asked and not assumed.
+        /// </remarks>
+        public Boolean StillLive(SecurityToken_Id Token)
+        {
+
+            if (Token.IsNullOrEmpty)
+                return false;
+
+            var now = Store.TimeProvider.GetUtcNow();
+
+            foreach (var session in Store)
+            {
+                if (session.Token == Token)
+                    return !session.IsExpired(now);
+            }
+
+            return false;
 
         }
 

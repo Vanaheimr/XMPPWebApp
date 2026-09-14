@@ -285,6 +285,18 @@ is refused when the browser says it came from another site.
   `HttpOnly; SameSite=strict` cookie, `secure` when the server speaks TLS.
   Sessions end after 12 hours without use, after 7 days at the latest. A
   failed sign-in waits half a second before it answers.
+- **An open event stream is asked again for every event it carries.** Every
+  other route answers one request, and the check it made is exactly as old as
+  the answer. The stream at `/api/v1/events` stays open for hours and keeps
+  delivering, so a session checked only when it opened would mean that signing
+  out, changing the password or running out of time ends the right to ask for
+  the conversations while leaving a channel open that keeps handing them over —
+  "ends every other session" above would have been true of the next request and
+  of nothing else. The check reads the session without touching it, which
+  matters more than it sounds: an ordinary lookup slides the idle timeout, so a
+  stream that checked itself that way would keep renewing its own session, and
+  twelve hours unused would quietly become twelve hours after the browser was
+  closed.
 - **The stored password only ever goes back where it came from.** The account
   page is never given the password — it learns that one is set, no more — and
   an empty password field on a save keeps the one on file. That convenience

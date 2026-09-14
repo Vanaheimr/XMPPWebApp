@@ -992,12 +992,30 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// Hermod's MapEventSource, with the session checked first and
         /// without opening the stream to other origins.
         /// </summary>
+        /// <remarks>
+        /// The session is checked again for every event, and that is the
+        /// difference between a stream and every other route here. A route
+        /// answers one request and the check it made is as old as the answer.
+        /// This one stays open for hours and keeps delivering, so a check made
+        /// only at the start would mean that signing out, changing the web
+        /// password, or letting a session time out ends the right to ask for
+        /// chats while leaving a channel open that keeps handing them over.
+        /// The settings page says a password change ends every other session;
+        /// without this it did not.
+        ///
+        /// Per event and not on a timer: an event is the only moment at which
+        /// this stream could disclose anything, so it is the moment worth
+        /// guarding. A revoked stream that nobody sends anything to sits there
+        /// until the next event or until the browser goes away - and delivers
+        /// nothing either way.
+        /// </remarks>
         private Task<HTTPResponse> StreamEvents(HTTPRequest Request)
         {
 
-            if (!TryGetSession(Request, out _, out var unauthorized))
+            if (!TryGetSession(Request, out var session, out var unauthorized))
                 return Task.FromResult(unauthorized);
 
+            var token    = session.Token;
             var clientId = Request.RemoteSocket.ToString();
 
             return Task.FromResult(
@@ -1030,10 +1048,22 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                                                        Request.CancellationToken
                                                                    ))
                                    {
+
+                                       // Before the write, never after it: the
+                                       // question is whether this event may be
+                                       // handed over at all.
+                                       if (!Sessions.StillLive(token))
+                                       {
+                                           logger.LogInformation("The event stream of {Client} ended: its session is gone.", clientId);
+                                           await Events.Unsubscribe(clientId);
+                                           break;
+                                       }
+
                                        await stream.WriteAsync(httpEvent.SerializedHeader);
                                        await stream.WriteAsync(httpEvent.SerializedData);
                                        await stream.WriteAsync("\n\n");
                                        await stream.FlushAsync(Request.CancellationToken);
+
                                    }
 
                                }

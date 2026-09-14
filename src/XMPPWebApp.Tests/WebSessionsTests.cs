@@ -201,11 +201,21 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #region AnIdleSession_Expires()
 
+        /// <remarks>
+        /// This used to set the timeout to 50 ms and sleep for 120. That is a
+        /// test that passes on an idle machine and loses a race on a busy one -
+        /// it failed once here, between two builds - and a gate that goes red
+        /// for the load of the runner stops being read. Since the session store
+        /// takes a clock, the hour can simply be declared over.
+        /// </remarks>
         [Test]
         public void AnIdleSession_Expires()
         {
 
-            var sessions = new WebSessions(Login("admin", "change-me"), IdleTimeout: TimeSpan.FromMilliseconds(50));
+            var clock     = new Clock(DateTimeOffset.Parse("2026-09-14T12:00:00Z"));
+            var sessions  = new WebSessions(Login("admin", "change-me"),
+                                            IdleTimeout:   TimeSpan.FromHours(1),
+                                            TimeProvider:  clock);
 
             sessions.TryLogin("admin", "change-me", out var session);
 
@@ -213,9 +223,168 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             Assert.That(sessions.TryGetSession(request, out _), Is.True);
 
-            Thread.Sleep(120);
+            clock.Advance(TimeSpan.FromHours(2));
 
             Assert.That(sessions.TryGetSession(request, out _), Is.False);
+
+        }
+
+        #endregion
+
+
+        #region (private) Clock
+
+        /// <summary>
+        /// A clock a test moves by hand, so that an hour costs nothing.
+        /// </summary>
+        private sealed class Clock(DateTimeOffset Start) : TimeProvider
+        {
+
+            private DateTimeOffset now = Start;
+
+            public override DateTimeOffset GetUtcNow()
+                => now;
+
+            public void Advance(TimeSpan By)
+                => now += By;
+
+        }
+
+        #endregion
+
+        #region ALiveSession_IsStillLive()
+
+        [Test]
+        public void ALiveSession_IsStillLive()
+        {
+
+            var sessions = new WebSessions(Login("admin", "change-me"));
+
+            sessions.TryLogin("admin", "change-me", out var session);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(sessions.StillLive(session!.Token),                         Is.True);
+                Assert.That(sessions.StillLive(SecurityToken_Id.Random()),           Is.False, "a token nobody issued");
+                Assert.That(sessions.StillLive(default),                                Is.False, "no token at all");
+            });
+
+        }
+
+        #endregion
+
+        #region SigningOut_EndsTheStreamAsWell()
+
+        [Test]
+        public void SigningOut_EndsTheStreamAsWell()
+        {
+
+            var sessions = new WebSessions(Login("admin", "change-me"));
+
+            sessions.TryLogin("admin", "change-me", out var session);
+
+            var request = RequestWith($"XMPPWebApp={session!.Token}");
+
+            Assert.That(sessions.StillLive(session.Token), Is.True, "before");
+
+            sessions.SignOut(request);
+
+            Assert.That(sessions.StillLive(session.Token), Is.False, "an open event stream has nothing to deliver to any more");
+
+        }
+
+        #endregion
+
+        #region APasswordChange_EndsTheStreamsOfTheOtherSessions()
+
+        /// <summary>
+        /// What the settings page promises whoever changes the password. It was
+        /// only ever true of the next request; a stream opened before the change
+        /// went on delivering, which is what <see cref="WebSessions.StillLive"/>
+        /// is there to stop.
+        /// </summary>
+        [Test]
+        public void APasswordChange_EndsTheStreamsOfTheOtherSessions()
+        {
+
+            var sessions = new WebSessions(Login("admin", "change-me"));
+
+            sessions.TryLogin("admin", "change-me", out var settingsPage);
+            sessions.TryLogin("admin", "change-me", out var somebodyElse);
+
+            sessions.UpdateLogin(Login("admin", "something-else"), settingsPage!.Token);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(sessions.StillLive(settingsPage.Token),   Is.True,  "the one that made the change keeps its stream");
+                Assert.That(sessions.StillLive(somebodyElse!.Token),  Is.False, "every other stream ends");
+            });
+
+        }
+
+        #endregion
+
+        #region AStream_DoesNotKeepItsOwnSessionAlive()
+
+        /// <summary>
+        /// The reason StillLive reads instead of asking TryGetSession: a lookup
+        /// there slides the idle timeout. A stream that checked itself that way
+        /// would renew its own session for every event, and a chat that keeps
+        /// arriving would hold a session open for as long as the browser stayed
+        /// open - or as long as nobody closed the laptop lid.
+        /// </summary>
+        [Test]
+        public void AStream_DoesNotKeepItsOwnSessionAlive()
+        {
+
+            var clock     = new Clock(DateTimeOffset.Parse("2026-09-14T12:00:00Z"));
+            var sessions  = new WebSessions(Login("admin", "change-me"),
+                                            IdleTimeout:   TimeSpan.FromHours(1),
+                                            TimeProvider:  clock);
+
+            sessions.TryLogin("admin", "change-me", out var session);
+
+            clock.Advance(TimeSpan.FromMinutes(50));
+
+            Assert.That(sessions.StillLive(session!.Token), Is.True, "still inside the hour");
+
+            clock.Advance(TimeSpan.FromMinutes(20));
+
+            Assert.That(sessions.StillLive(session.Token), Is.False,
+                        "asking twice did not buy it another hour");
+
+        }
+
+        #endregion
+
+        #region ARequest_DoesRenewTheSession()
+
+        /// <summary>
+        /// The other half of the test above, so that the difference is written
+        /// down rather than assumed: an ordinary request is use, and use is
+        /// what the idle timeout measures.
+        /// </summary>
+        [Test]
+        public void ARequest_DoesRenewTheSession()
+        {
+
+            var clock     = new Clock(DateTimeOffset.Parse("2026-09-14T12:00:00Z"));
+            var sessions  = new WebSessions(Login("admin", "change-me"),
+                                            IdleTimeout:   TimeSpan.FromHours(1),
+                                            TimeProvider:  clock);
+
+            sessions.TryLogin("admin", "change-me", out var session);
+
+            var request = RequestWith($"XMPPWebApp={session!.Token}");
+
+            clock.Advance(TimeSpan.FromMinutes(50));
+
+            Assert.That(sessions.TryGetSession(request, out _), Is.True);
+
+            clock.Advance(TimeSpan.FromMinutes(20));
+
+            Assert.That(sessions.StillLive(session.Token), Is.True,
+                        "the request at minute 50 moved the hour along");
 
         }
 
