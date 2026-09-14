@@ -35,9 +35,34 @@
       Both are pinned submodules under libs/; Ratatoskr reaches for Hermod at
       ..\..\Hermod, which under libs/ is its sibling, so both references name
       the same Hermod.csproj.
+
+      Each of them twice, one of which is always off - not indecision, but the
+      two trees this project is built in. XMPPConsole carries the same pair for
+      the same reason; here it is one directory deeper, because this project
+      sits under src/ rather than at the repository root.
+
+      Cloned on its own, one clone recursing into the submodules is the whole
+      build: libs/Ratatoskr exists, pins a revision, and reaches on for its
+      siblings. That is what an application repository owes whoever clones it.
+
+      Inside XMPPConformanceTests this is itself a submodule, and that checkout
+      is deliberately not recursive - libs/XMPPWebApp/libs/ stays empty, so that
+      two revisions of the library under test cannot end up in one solution.
+      Without the fallback MSBuild does not fail on the empty directory. It
+      SKIPS both references with a message and compiles on without them, and
+      the build then reports 452 errors about missing Newtonsoft and Hermod
+      types - the one line naming the cause passing by, the 452 that do not
+      being what gets read. That is what this file did until now, and why it
+      could be checked out there but not built.
+
+      So the pin here never competes with the pin there. Delete the fallback and
+      the conformance suite stops building this; delete the submodules and a
+      plain clone stops building it.
     -->
-    <ProjectReference Include="..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj" />
-    <ProjectReference Include="..\..\libs\Hermod\Hermod\Hermod.csproj" />
+    <ProjectReference Include="..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj" Condition="Exists('..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+    <ProjectReference Include="..\..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj"   Condition="!Exists('..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+    <ProjectReference Include="..\..\libs\Hermod\Hermod\Hermod.csproj"          Condition="Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
+    <ProjectReference Include="..\..\..\Hermod\Hermod\Hermod.csproj"            Condition="!Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
   </ItemGroup>
 
 
