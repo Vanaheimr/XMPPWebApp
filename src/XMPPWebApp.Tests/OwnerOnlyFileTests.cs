@@ -78,17 +78,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
-        #region (private) OnlyOnUnix()
-
-        private static void OnlyOnUnix()
-        {
-            if (OperatingSystem.IsWindows())
-                Assert.Ignore("Unix file modes. On Windows the directory decides, not the file - see PrivatePathsTests.");
-        }
-
-        #endregion
-
-
         #region AnAppend_AddsRatherThanReplaces()
 
         /// <summary>
@@ -125,7 +114,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         public void OnUnix_AWrittenFile_IsOwnerOnly()
         {
 
-            OnlyOnUnix();
+            // The guard is written out in every test rather than called from a
+            // helper, because CA1416 has to see it: an analyser cannot know
+            // that Assert.Ignore never returns, and File.GetUnixFileMode is
+            // unsupported on Windows.
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Ignore("Unix file modes. On Windows the directory decides, not the file - see PrivatePathsTests.");
+                return;
+            }
 
             var path = Path.Combine(root, "xmpp-account.json");
 
@@ -148,7 +145,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         public void OnUnix_AnAppendedFile_IsOwnerOnly()
         {
 
-            OnlyOnUnix();
+            // The guard is written out in every test rather than called from a
+            // helper, because CA1416 has to see it: an analyser cannot know
+            // that Assert.Ignore never returns, and File.GetUnixFileMode is
+            // unsupported on Windows.
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Ignore("Unix file modes. On Windows the directory decides, not the file - see PrivatePathsTests.");
+                return;
+            }
 
             var path = Path.Combine(root, "alice@example.org_2026-09.jsonl");
 
@@ -167,16 +172,38 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         public void OnUnix_ADirectory_IsOwnerOnly()
         {
 
-            OnlyOnUnix();
+            // The guard is written out in every test rather than called from a
+            // helper, because CA1416 has to see it: an analyser cannot know
+            // that Assert.Ignore never returns, and File.GetUnixFileMode is
+            // unsupported on Windows.
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Ignore("Unix file modes. On Windows the directory decides, not the file - see PrivatePathsTests.");
+                return;
+            }
 
-            var path = Path.Combine(root, "me@example.org", "alice@example.org", "media");
+            // Three segments at once, which is what the archive does:
+            // root/account/conversation/media.
+            var media         = Path.Combine(root, "me@example.org", "alice@example.org", "media");
+            var conversation  = Path.GetDirectoryName(media)!;
+            var account       = Path.GetDirectoryName(conversation)!;
 
-            OwnerOnlyFile.CreateDirectory(path);
+            OwnerOnlyFile.CreateDirectory(media);
+
+            // Read out here and not inside the Assert.Multiple below: a lambda
+            // is analysed on its own, so the platform guard above does not
+            // reach into it and CA1416 would have something to say.
+            var modes = new[] {
+                            File.GetUnixFileMode(media),
+                            File.GetUnixFileMode(conversation),
+                            File.GetUnixFileMode(account)
+                        };
 
             Assert.Multiple(() =>
             {
-                Assert.That(File.GetUnixFileMode(path),                               Is.EqualTo(OwnerOnlyDirectoryMode), "0700");
-                Assert.That(File.GetUnixFileMode(Path.GetDirectoryName(path)!),       Is.EqualTo(OwnerOnlyDirectoryMode), "and the parents it had to make on the way");
+                Assert.That(modes[0],  Is.EqualTo(OwnerOnlyDirectoryMode), "media, the one the call names");
+                Assert.That(modes[1],  Is.EqualTo(OwnerOnlyDirectoryMode), "the conversation it had to make on the way");
+                Assert.That(modes[2],  Is.EqualTo(OwnerOnlyDirectoryMode), "and the account above it - 0755 here would list every JID this account talks to");
             });
 
         }
@@ -189,16 +216,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         public async Task OnUnix_WrittenBytes_AreOwnerOnly()
         {
 
-            OnlyOnUnix();
+            // The guard is written out in every test rather than called from a
+            // helper, because CA1416 has to see it: an analyser cannot know
+            // that Assert.Ignore never returns, and File.GetUnixFileMode is
+            // unsupported on Windows.
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Ignore("Unix file modes. On Windows the directory decides, not the file - see PrivatePathsTests.");
+                return;
+            }
 
             var path = Path.Combine(root, "20260914T120000Z_photo.jpg");
 
             await OwnerOnlyFile.WriteAllBytesAsync(path, [1, 2, 3]);
 
+            var mode = File.GetUnixFileMode(path);
+
             Assert.Multiple(() =>
             {
-                Assert.That(File.GetUnixFileMode(path),  Is.EqualTo(OwnerOnlyFileMode), "0600");
-                Assert.That(File.ReadAllBytes(path),     Is.EqualTo(new Byte[] { 1, 2, 3 }));
+                Assert.That(mode,                     Is.EqualTo(OwnerOnlyFileMode), "0600");
+                Assert.That(File.ReadAllBytes(path),  Is.EqualTo(new Byte[] { 1, 2, 3 }));
             });
 
         }

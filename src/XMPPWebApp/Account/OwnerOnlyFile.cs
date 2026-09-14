@@ -90,12 +90,25 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Account
 
         /// <summary>
         /// Creates a directory nobody but its owner may enter (0700 on Unix),
-        /// parents included; an ordinary one on Windows, where the parent
-        /// decides.
+        /// every segment it has to make included; an ordinary one on Windows,
+        /// where the parent decides.
         /// </summary>
         /// <remarks>
         /// The execute bit is what makes a directory enterable, so 0700 rather
         /// than 0600: without it the owner could not reach their own files.
+        ///
+        /// <b>Every segment on its own, and that is not belt and braces.</b>
+        /// Directory.CreateDirectory(path, mode) puts the mode on the last
+        /// segment and leaves whatever it had to make on the way to the umask -
+        /// 0755 on a Debian box. The archive makes three at a time,
+        /// root/account/conversation/media, so the one call would have left the
+        /// account directory world-readable while carefully closing the media
+        /// directory inside it. The files would still have been 0600 and their
+        /// contents safe; the listing would have named every JID this account
+        /// talks to, which is most of what a conversation gives away.
+        ///
+        /// Found by the Debian leg of CI on the commit that introduced it, and
+        /// not findable on the Windows machine it was written on.
         /// </remarks>
         public static void CreateDirectory(String Path)
         {
@@ -106,10 +119,23 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Account
                 return;
             }
 
-            Directory.CreateDirectory(Path,
-                                      UnixFileMode.UserRead |
-                                      UnixFileMode.UserWrite |
-                                      UnixFileMode.UserExecute);
+            const UnixFileMode ownerOnly = UnixFileMode.UserRead |
+                                           UnixFileMode.UserWrite |
+                                           UnixFileMode.UserExecute;
+
+            var missing = new Stack<String>();
+
+            for (var directory = System.IO.Path.GetFullPath(Path);
+                 directory is not null && !Directory.Exists(directory);
+                 directory = System.IO.Path.GetDirectoryName(directory))
+            {
+                missing.Push(directory);
+            }
+
+            // Outermost first, so that each one exists by the time the next is
+            // made inside it.
+            while (missing.Count > 0)
+                Directory.CreateDirectory(missing.Pop(), ownerOnly);
 
         }
 
