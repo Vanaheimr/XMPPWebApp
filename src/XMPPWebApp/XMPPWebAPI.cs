@@ -28,6 +28,7 @@ using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.Passkeys;
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Chats;
@@ -165,9 +166,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                           ChatStore?        Chats           = null,
                           ChatArchive?      Archive         = null,
                           TimeSpan?         HistoryWindow   = null,
-                          String            DataDirectory   = "",
-                          Boolean           SecureCookies   = false,
-                          ILoggerFactory?   LoggerFactory   = null)
+                          String             DataDirectory     = "",
+                          Boolean            SecureCookies     = false,
+                          WebAuthnSettings?  WebAuthnSettings  = null,
+                          ILoggerFactory?    LoggerFactory     = null)
 
             : base(HTTPServer,
                    RootPath:              RootPath ?? DefaultRootPath,
@@ -187,7 +189,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                    UseSecureCookies:          SecureCookies,
 
                    MaxSignInSessionLifetime:  SessionLifetime,
-                   SessionIdleTimeout:        SessionIdleTime)
+                   SessionIdleTimeout:        SessionIdleTime,
+
+                   // Null and the seven passkey routes are not registered at
+                   // all; set and they are. What decides it is whether this
+                   // process can name one origin a browser will accept - see
+                   // Program.cs.
+                   WebAuthnSettings:          WebAuthnSettings)
 
         {
 

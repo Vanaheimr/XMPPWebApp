@@ -40,6 +40,20 @@ export interface AccountResponse {
     connection:   Connection;
 }
 
+/** One registered passkey, as the account routes list it. */
+export interface Passkey {
+    id:          string;
+    name:        string;
+    createdAt:   string;
+    lastUsedAt:  string | null;
+}
+
+/** The options of one ceremony, with every byte string as base64url. */
+export interface PasskeyCeremony {
+    ceremonyId:  string;
+    publicKey:   Record<string, unknown>;
+}
+
 /** What the settings page sends to change the password of the account. */
 export interface PasswordUpdate {
     /** required: a session alone must not be able to take the account over */
@@ -241,6 +255,21 @@ export const api = {
         logout:          ()                                  => request<void>('POST', '/auth/logout',   undefined,                     config.authBase),
         rename:          (displayName: string)               => request<Me>  ('PUT',  '/auth/me',       { displayName },               config.authBase),
         changePassword:  (update: PasswordUpdate)            => request<void>('POST', '/auth/password', update,                        config.authBase)
+    },
+
+    /**
+     * The passkey ceremonies. These routes exist only when the server could
+     * name an origin a browser will accept, so a 404 here is an answer and not
+     * a fault - see passkeys.ts.
+     */
+    passkeys: {
+        list:             ()                       => request<{ passkeys: Passkey[] }>('GET',    '/auth/passkeys',                 undefined, config.authBase),
+        registerOptions:  ()                       => request<PasskeyCeremony>        ('POST',   '/auth/passkeys/register/options', {},       config.authBase),
+        register:         (body: unknown)          => request<{ passkey: Passkey }>   ('POST',   '/auth/passkeys/register',         body,     config.authBase),
+        loginOptions:     (login?: string)         => request<PasskeyCeremony>        ('POST',   '/auth/passkeys/login/options',    login !== undefined ? { login } : {}, config.authBase),
+        login:            (body: unknown)          => request<Me>                     ('POST',   '/auth/passkeys/login',            body,     config.authBase),
+        rename:           (id: string, name: string) => request<{ passkey: Passkey }> ('PUT',    `/auth/passkeys/${encodeURIComponent(id)}`, { name }, config.authBase),
+        remove:           (id: string)             => request<void>                   ('DELETE', `/auth/passkeys/${encodeURIComponent(id)}`, undefined, config.authBase)
     },
 
     status:     ()  => request<Status>('GET',  '/status'),

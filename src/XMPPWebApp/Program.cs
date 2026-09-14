@@ -24,6 +24,7 @@ using Microsoft.Extensions.Logging;
 using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.Passkeys;
 using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Chats;
@@ -70,6 +71,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             String?  certificatePEM     = null;
             String?  keyPEM             = null;
             String?  accountFilePath    = null;
+            String?  originArgument     = null;
             String?  archiveDirectory   = null;
             var      keepArchive        = true;
             var      keepMedia          = true;
@@ -144,6 +146,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                         if (!TryTakeValue(Arguments, ref i, out accountFilePath))
                         {
                             Console.Error.WriteLine("Missing file after --account!");
+                            return 2;
+                        }
+                        break;
+
+                    case "--origin":
+                        if (!TryTakeValue(Arguments, ref i, out originArgument))
+                        {
+                            Console.Error.WriteLine("Missing URL after --origin!");
                             return 2;
                         }
                         break;
@@ -421,6 +431,52 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             #endregion
 
+            #region Passkeys: one origin, or none
+
+            // A passkey is bound to one name and one origin, and both have to be
+            // decided here rather than per request - the browser will not offer
+            // one otherwise.
+            //
+            // Three things have to hold, and each of them is a real limit
+            // somebody will meet:
+            //
+            //  * The relying party id has to be a domain. "127.0.0.1" is not
+            //    one, whatever a browser thinks of it otherwise, so the default
+            //    names localhost and a passkey only appears for whoever opens
+            //    the page as http://localhost:port/ - not as 127.0.0.1.
+            //  * The origin has to be a secure context: https anywhere, or http
+            //    to localhost. A LAN address over plain http offers no
+            //    navigator.credentials at all.
+            //  * With --any this process does not know which name a browser
+            //    will arrive under, so it has to be told: --origin.
+            var passkeyOrigin  = originArgument
+                                     ?? (anyAddress
+                                             ? null
+                                             : $"{(useTLS ? "https" : "http")}://localhost:{port}");
+
+            WebAuthnSettings?  webAuthn         = null;
+            String?            passkeyProblem   = null;
+
+            if (passkeyOrigin is null)
+                passkeyProblem = "--any does not say which name a browser will use; pass --origin <url> to offer passkeys";
+
+            else if (!Uri.TryCreate(passkeyOrigin, UriKind.Absolute, out var originURL))
+                passkeyProblem = $"'{passkeyOrigin}' is not a URL";
+
+            else if (originURL.Scheme != "https" &&
+                     !(originURL.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                       originURL.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)))
+                passkeyProblem = $"'{passkeyOrigin}' is not a secure context: a browser offers passkeys over https, or over http only to localhost";
+
+            else
+                webAuthn = new WebAuthnSettings(
+                               RpId:     originURL.Host,
+                               RpName:   "XMPPWebApp",
+                               Origins:  [ originURL.GetLeftPart(UriPartial.Authority) ]
+                           );
+
+            #endregion
+
             #region Start the HTTP server
 
             var httpServer  = await HTTPServer.StartNew(
@@ -459,8 +515,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                           Version:        version,
                           Archive:        archive,
                           HistoryWindow:  TimeSpan.FromDays(historyDays),
-                          DataDirectory:  PrivatePaths.Directory(),
-                          SecureCookies:  useTLS,
+                          DataDirectory:     PrivatePaths.Directory(),
+                          SecureCookies:     useTLS,
+                          WebAuthnSettings:  webAuthn,
                           LoggerFactory:  loggerFactory
                       );
 
@@ -560,6 +617,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine($"  JSON API at    {origin}{api.RootPath.ToString().TrimEnd('/')}/v1/status");
             Console.WriteLine($"  events         {origin}{api.RootPath.ToString().TrimEnd('/')}/v1/events");
             Console.WriteLine($"  accounts       {api.Users.Count()} in {PrivatePaths.Directory()}, sign-in at {origin}{api.RootPath.ToString().TrimEnd('/')}/auth/login");
+            Console.WriteLine(webAuthn is not null
+                                  ? $"  passkeys       on for {webAuthn.Origins[0]} (relying party '{webAuthn.RpId}')"
+                                  : $"  passkeys       off: {passkeyProblem}");
             Console.WriteLine($"  account file   {accountFile.Path}{(accountFile.Exists ? "" : " (not there yet)")}");
 
             if (archive is not null)
@@ -763,6 +823,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine("  --no-media        write the conversations, but do not fetch the files shared in them");
             Console.WriteLine($"  --history-days <n>  how much of the archive is loaded at a start (default: {ChatArchive.DefaultHistoryWindow.TotalDays:0});");
             Console.WriteLine("                      older messages are loaded when the page is scrolled up to them");
+            Console.WriteLine();
+            Console.WriteLine("Passkeys:");
+            Console.WriteLine("  --origin <url>    the address browsers reach this at, e.g. https://chat.example.org");
+            Console.WriteLine("                    A passkey belongs to one name, so it has to be named. Without this,");
+            Console.WriteLine("                    http://localhost:<port> is assumed - which is why a passkey appears");
+            Console.WriteLine("                    when the page is opened as localhost and not as 127.0.0.1, and why");
+            Console.WriteLine("                    --any needs this option to offer one at all.");
             Console.WriteLine();
             Console.WriteLine("Accounts:");
             Console.WriteLine($"  The accounts live in {PrivatePaths.Directory()}, in the database of");

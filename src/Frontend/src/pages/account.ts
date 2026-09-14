@@ -1,4 +1,5 @@
-import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Me, type SaslMechanism } from '../api/client';
+import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Me, type Passkey, type SaslMechanism } from '../api/client';
+import { passkeysPossible, register as registerPasskey } from '../passkeys';
 import { html, must, render } from '../html';
 import type { Page } from '../router';
 import { errorMessage, field } from '../ui';
@@ -51,9 +52,142 @@ export const accountPage: Page = {
 
         renderWebLogin(loginArea, me);
 
+        // After the login card, and only when this browser could use one. What
+        // the server thinks is found out by asking: the routes are not there at
+        // all when it has no origin to bind a passkey to.
+        if (passkeysPossible())
+            void renderPasskeys(loginArea);
+
     }
 
 };
+
+
+// ---------------------------------------------------------------------------
+// Passkeys
+
+async function renderPasskeys(after: HTMLElement): Promise<void> {
+
+    const area = document.createElement('div');
+    after.append(area);
+
+    let passkeys: Passkey[];
+
+    try
+    {
+        passkeys = (await api.passkeys.list()).passkeys;
+    }
+    catch (problem)
+    {
+        // 404: this server has no origin it can bind a passkey to, so there is
+        // nothing to offer and nothing to apologise for either.
+        area.remove();
+        return;
+    }
+
+    const draw = () => {
+
+        render(area, html`
+            <div class="card">
+
+                <h2>Passkeys</h2>
+
+                <p class="muted small">
+                    A second way in, beside the password - your fingerprint, your
+                    face, or a security key. Nothing about the password changes:
+                    a passkey is an addition, because an authenticator that goes
+                    missing must not take the account with it.
+                </p>
+
+                ${passkeys.length === 0
+                      ? html`<p class="muted small">None yet.</p>`
+                      : html`<ul class="passkeys">${passkeys.map(passkey => html`
+                            <li>
+                                <span class="name">${passkey.name}</span>
+                                <span class="muted small">
+                                    added ${new Date(passkey.createdAt).toLocaleDateString()}${
+                                        passkey.lastUsedAt
+                                            ? `, last used ${new Date(passkey.lastUsedAt).toLocaleDateString()}`
+                                            : ', never used'}
+                                </span>
+                                <button type="button" class="btn small danger" data-remove="${passkey.id}">Remove</button>
+                            </li>
+                        `)}</ul>`}
+
+                <form id="passkey-form" class="form-stack" autocomplete="off">
+                    <label>Name for the new passkey
+                        <input name="name" required maxlength="60" placeholder="e.g. this laptop" />
+                    </label>
+                    <div class="form-actions">
+                        <button type="submit" class="btn primary">
+                            <i class="fa-solid fa-key"></i> Add a passkey
+                        </button>
+                        <span id="passkey-error" class="form-error" role="alert"></span>
+                        <span id="passkey-ok" class="form-notice" role="status"></span>
+                    </div>
+                </form>
+
+            </div>
+        `);
+
+        const form    = must<HTMLFormElement>(area, '#passkey-form');
+        const error   = must<HTMLElement>(area, '#passkey-error');
+        const ok      = must<HTMLElement>(area, '#passkey-ok');
+        const button  = must<HTMLButtonElement>(form, 'button[type="submit"]');
+
+        const reload = async () => { passkeys = (await api.passkeys.list()).passkeys; draw(); };
+
+        form.addEventListener('submit', event => {
+
+            event.preventDefault();
+            error.textContent  = '';
+            ok.textContent     = '';
+            button.disabled    = true;
+
+            void (async () => {
+                try
+                {
+                    await registerPasskey(field(form, 'name'));
+                    await reload();
+                }
+                catch (problem)
+                {
+                    // Changing one's mind at the system prompt is not an error.
+                    error.textContent = problem instanceof DOMException && problem.name === 'NotAllowedError'
+                                            ? ''
+                                            : errorMessage(problem);
+                    button.disabled = false;
+                }
+            })();
+
+        });
+
+        for (const remove of area.querySelectorAll<HTMLButtonElement>('button[data-remove]'))
+            remove.addEventListener('click', () => {
+
+                error.textContent = '';
+                remove.disabled   = true;
+
+                void (async () => {
+                    try
+                    {
+                        await api.passkeys.remove(remove.dataset.remove ?? '');
+                        await reload();
+                    }
+                    catch (problem)
+                    {
+                        error.textContent = errorMessage(problem);
+                        remove.disabled   = false;
+                    }
+                })();
+
+            });
+
+    };
+
+    draw();
+
+}
 
 
 // ---------------------------------------------------------------------------

@@ -68,6 +68,12 @@ that talks to it.
   This program makes exactly one account on its first start, prints the password
   once on the console, and offers no sign-up. The password is changed on the
   settings page, which ends every other session.
+- **Passkeys, beside the password.** Register one on the settings page - your
+  fingerprint, your face, a security key - and sign in with it afterwards
+  without typing anything. It is an *addition* and not a replacement: an
+  authenticator that goes missing must not take the account with it, so the
+  password stays. What it buys is that the sign-in cannot be phished, because
+  the authenticator signs the origin it is actually on.
 - **A Jabber client's screen.** Contacts and conversations on the left, sorted
   by their last activity, with presence, status text, an unread badge and a
   typing indicator. The open conversation on the right, with day separators,
@@ -179,6 +185,7 @@ dotnet run --project src\XMPPWebApp\XMPPWebApp.csproj -- --jid user@example.org 
 | `--cert-pem <file>` | serve HTTPS with a PEM certificate, e.g. Let's Encrypt's `fullchain.pem` |
 | `--key-pem <file>` | its private key, e.g. `privkey.pem`; without it the key is expected in the certificate file itself |
 | `--dev [<dir>]` | serve the frontend from the webpack output directory on disk (default `src/Frontend/dist`) and reload the page whenever it changes, see [Development](#development) |
+| `--origin <url>` | the address browsers reach this at, e.g. `https://chat.example.org`; a passkey belongs to one name, so it has to be named |
 | `--account <file>` | where the account settings live (default: `xmpp-account.json` in the application data directory); the settings page reads and writes this file |
 | `--archive <dir>` | where the conversations are kept (default: `chats/` there as well) |
 | `--no-archive` | keep nothing: what is said is gone when the process is |
@@ -264,7 +271,17 @@ POST /auth/logout                                       ends the session
 GET  /auth/me                                           who is signed in
 PUT  /auth/me               {"displayName"}             rename yourself; the username does not change
 POST /auth/password         {"currentPassword",…}       change it; ends every other session
+POST /auth/passkeys/register/options                    start registering one (session required)
+POST /auth/passkeys/register  {"name","ceremonyId",…}   finish it
+POST /auth/passkeys/login/options   {"login"?}          start signing in with one
+POST /auth/passkeys/login     {"ceremonyId",…}          finish it; the session cookie
+GET  /auth/passkeys                                     the ones registered
+PUT  /auth/passkeys/{id}    {"name"}                    rename one
+DELETE /auth/passkeys/{id}                              remove one
 ```
+
+The seven passkey routes exist only when the server could name an origin a
+browser will accept; see the security notes.
 
 The **JSON API** of this application, below `/api/v1`:
 
@@ -321,6 +338,19 @@ is refused when the browser says it came from another site.
   archive: a session ends after **12 hours** without use and after **7 days**
   at the latest. Left alone it would be thirty days and no idle timeout at
   all.
+- **A passkey belongs to one name, so the name has to be decided before
+  anything is offered.** Three things have to hold, and each is a limit somebody
+  will meet. The relying party id has to be a *domain*: `127.0.0.1` is not one,
+  whatever a browser otherwise thinks of loopback, so the default names
+  `localhost` — **a passkey appears when the page is opened as
+  `http://localhost:8080/` and not as `http://127.0.0.1:8080/`**, which is the
+  same server under a name a credential can bind to. The origin has to be a
+  secure context: https anywhere, or http to localhost, because a LAN address
+  over plain http has no `navigator.credentials` at all. And with `--any` this
+  process cannot know which name a browser will arrive under, so it has to be
+  told with `--origin`. Where none of that works out, the routes are not
+  registered and the console says which of the three it was — no button that
+  fails after the click.
 - **Signing in is rationed, because verifying a password is expensive on
   purpose.** 600 000 rounds of PBKDF2 are what make the stored hash costly to
   attack offline, and the same number is what makes `POST /api/v1/auth/login`
