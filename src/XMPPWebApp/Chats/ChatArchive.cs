@@ -86,7 +86,44 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// <summary>
         /// How many files are fetched at the same time.
         /// </summary>
+        /// <remarks>
+        /// This number and <see cref="MediaStore.MaxBytes"/> are what bound the
+        /// memory a download may occupy: three at 64 MiB, and a copy of each on
+        /// the way out of the buffer. A file has to be whole before it can be
+        /// written - an encrypted one has to be whole before its tag can even be
+        /// checked - so the way to make that number smaller is to make one of
+        /// these two smaller, not to stream.
+        /// </remarks>
         private const          Int32     ParallelDownloads     = 3;
+
+        /// <summary>
+        /// How many messages are remembered as already fetched for.
+        /// </summary>
+        /// <remarks>
+        /// The same reasoning, and the same forgetting, as
+        /// <see cref="lastWritten"/>: whoever writes to this account decides
+        /// how many entries appear here, so there has to be a number. Past it
+        /// the set is emptied rather than trimmed, because what is being
+        /// avoided is a second download of the same file and not a
+        /// correctness problem - a message that comes round again after the
+        /// forgetting is fetched a second time and written a second time, and
+        /// the last line for it wins as always.
+        /// </remarks>
+        public  const          Int32     MaxRememberedFetches  = 4096;
+
+        /// <summary>
+        /// How many fetches may be outstanding before the rest are let go.
+        /// </summary>
+        /// <remarks>
+        /// Only three run at once; the others sit in front of that semaphore,
+        /// each holding on to its message and its URL. A peer sending ten
+        /// thousand links would otherwise put ten thousand tasks in that
+        /// queue, which is a queue nobody bounded. Past this number the link
+        /// is not fetched at all - the message itself is archived either way,
+        /// so what is lost is a copy of somebody else's file and not anything
+        /// that was said.
+        /// </remarks>
+        public  const          Int32     MaxPendingFetches     = 64;
 
         private readonly Channel<ChatMessage>      queue;
         private readonly CancellationTokenSource   stopping   = new();
@@ -111,6 +148,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         private readonly List<Task>                  running      = [];
 
+        /// <summary>
+        /// How many links were let go because too many fetches were already
+        /// outstanding.
+        /// </summary>
+        private          Int64                       declined     = 0;
+
         private Boolean  problemReported;
         private Int64    suppressedProblems;
         private Int64    recorded;
@@ -130,6 +173,31 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// configured. Everything below the root is filed under it.
         /// </summary>
         public JID?      Account        { get; private set; }
+
+        /// <summary>
+        /// How many messages are currently remembered as fetched for, and how
+        /// many fetches are outstanding. Both are bounded on purpose; see the
+        /// constants they are bounded by.
+        /// </summary>
+        public Int32 RememberedFetches
+        {
+            get { lock (@lock) { return fetched.Count; } }
+        }
+
+        /// <summary>
+        /// How many fetches have been started and not yet finished.
+        /// </summary>
+        public Int32 PendingFetches
+        {
+            get { lock (@lock) { return running.Count; } }
+        }
+
+        /// <summary>
+        /// How many shared files were not fetched because too many fetches were
+        /// already outstanding.
+        /// </summary>
+        public Int64 DeclinedFetches
+            => Interlocked.Read(ref declined);
 
         /// <summary>
         /// Whether shared files are fetched and kept beside the conversations.
@@ -671,10 +739,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             lock (@lock)
             {
 
+                running.RemoveAll(task => task.IsCompleted);
+
+                // Before the set is written to, not after: a link that is let
+                // go must not be remembered as fetched, or it would never be
+                // fetched again either.
+                if (running.Count >= MaxPendingFetches)
+                {
+
+                    if (Interlocked.Increment(ref declined) == 1)
+                        logger.LogWarning("More than {Pending} files were waiting to be fetched; further shared files are left where they are. The messages themselves are archived as always.",
+                                          MaxPendingFetches);
+
+                    return;
+
+                }
+
                 if (!fetched.Add(Key(Message)))
                     return;
 
-                running.RemoveAll(task => task.IsCompleted);
+                if (fetched.Count > MaxRememberedFetches)
+                    fetched.Clear();
+
                 running.Add(FetchAsync(account.Value, Message, url));
 
             }
@@ -690,7 +776,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// whose JID ends in an id from meeting an id that begins with one.
         /// </summary>
         private static String Key(ChatMessage Message)
-            => String.Concat(Message.Chat.ToString(), " ", Message.Id);
+            => String.Concat(Message.Chat.ToString(), "\0", Message.Id);
 
         #endregion
 

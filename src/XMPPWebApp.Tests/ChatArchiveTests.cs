@@ -631,6 +631,57 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region WhatAPeerCanGrow_StaysBounded()
+
+        /// <summary>
+        /// A peer decides how many messages arrive and how many of them hand
+        /// over a file, so every table that grows one entry per such message has
+        /// to have a number written next to it. Two of them did not: the set of
+        /// messages already fetched for, and the list of fetches waiting for a
+        /// turn.
+        /// </summary>
+        /// <remarks>
+        /// The addresses are loopback ones, which the media store refuses
+        /// before it opens a socket - nothing here reaches the network, and the
+        /// fetches fail quickly rather than being held open. That makes this an
+        /// assertion about the invariants and not about the moment they bite:
+        /// what it would catch is either table growing with the messages again,
+        /// which is exactly what it was written for.
+        /// </remarks>
+        [Test]
+        public async Task WhatAPeerCanGrow_StaysBounded()
+        {
+
+            await using var archive = Open(KeepMedia: true);
+
+            var when = DateTimeOffset.Parse("2026-09-14T12:00:00Z");
+
+            for (var i = 0; i < 1000; i++)
+                archive.Record(Incoming(alice, $"m{i}", $"https://127.0.0.1/{i}.png", when.AddSeconds(i)));
+
+            await archive.FlushAsync(TimeSpan.FromSeconds(30));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(archive.RememberedFetches,
+                            Is.LessThanOrEqualTo(ChatArchive.MaxRememberedFetches),
+                            "the set of messages already fetched for");
+
+                Assert.That(archive.PendingFetches,
+                            Is.LessThanOrEqualTo(ChatArchive.MaxPendingFetches),
+                            "the fetches waiting for one of the three turns");
+
+                Assert.That(archive.RememberedFetches + archive.DeclinedFetches,
+                            Is.LessThanOrEqualTo(1000),
+                            "and nothing was counted that never arrived");
+
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

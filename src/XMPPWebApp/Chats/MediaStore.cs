@@ -75,6 +75,31 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         public const           Int64     MaxBytes      = 64L * 1024 * 1024;
 
         /// <summary>
+        /// How much of this disk all the files of one account may take up
+        /// together.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="MaxBytes"/> bounds one file and bounds nothing else: the
+        /// number of files is decided by whoever is sending them. Without a
+        /// second number, anybody who may write to this account may write to
+        /// this disk until it is full, and a full disk is not an archive that
+        /// stopped growing - it is a machine that stopped.
+        ///
+        /// What happens at the line is that fetching stops, and nothing else.
+        /// Nothing already written is deleted and nothing said is lost: the
+        /// conversations keep being archived, the files simply stay where they
+        /// were shared and are shown from there. An archive whose promise is
+        /// that everything said is kept may not start deleting to make room.
+        /// </remarks>
+        public const           Int64     MaxTotalBytes = 2L * 1024 * 1024 * 1024;
+
+        /// <summary>
+        /// The line in force for this store; <see cref="MaxTotalBytes"/> unless
+        /// something else was asked for.
+        /// </summary>
+        public Int64 TotalBytesAllowed { get; }
+
+        /// <summary>
         /// How long one file may take altogether.
         /// </summary>
         public static readonly TimeSpan  Timeout       = TimeSpan.FromMinutes(2);
@@ -146,7 +171,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 { ".weba",  "audio/webm"  }
             };
 
-        private readonly HttpClient  httpClient;
+        private readonly HttpClient                 httpClient;
+        private readonly Lock                       @lock   = new();
+
+        /// <summary>
+        /// How many bytes of files one account already keeps here. Counted once
+        /// by walking the directories, and kept up to date from then on - the
+        /// walk is what a restart costs, once, and not what every shared file
+        /// costs.
+        /// </summary>
+        private readonly Dictionary<String, Int64>  used    = [];
 
         #endregion
 
@@ -164,10 +198,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// <summary>
         /// Creates a store below the archive root.
         /// </summary>
-        public MediaStore(String Root)
+        /// <param name="Root">Where the archive lives.</param>
+        /// <param name="TotalBytesAllowed">How much one account's files may take up together; <see cref="MaxTotalBytes"/> by default.</param>
+        public MediaStore(String  Root,
+                          Int64?  TotalBytesAllowed   = null)
         {
 
-            this.Root = Path.GetFullPath(Root);
+            this.Root               = Path.GetFullPath(Root);
+            this.TotalBytesAllowed  = TotalBytesAllowed ?? MaxTotalBytes;
 
             // Redirects by hand: AllowAutoRedirect would follow a 302 into the
             // private network the first address was refused for.
@@ -234,6 +272,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                                                          CancellationToken  CancellationToken = default)
         {
 
+            // First of all, and before a single byte travels: a fetch that
+            // could not be kept is bandwidth spent on nothing.
+            if (!HasRoom(Account, out var alreadyUsed))
+                return (null, $"the {TotalBytesAllowed} bytes kept for {Account} are full ({alreadyUsed} bytes); nothing further is fetched");
+
             Byte[]? key    = null;
             Byte[]? nonce  = null;
 
@@ -293,6 +336,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                 );
 
                 await File.WriteAllBytesAsync(Path.Combine(directory, name), content!, CancellationToken);
+
+                Remember(Account, content!.LongLength);
 
                 return (new MediaRef(
                             name,
@@ -398,6 +443,97 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+        #region (private) HasRoom(Account, out Used) / Remember(Account, Bytes)
+
+        /// <summary>
+        /// Whether this account is still below its line, and how much it keeps
+        /// already.
+        /// </summary>
+        private Boolean HasRoom(JID        Account,
+                                out Int64  Used)
+        {
+
+            var account = ChatArchivePaths.SafeName(Account.ToString());
+
+            lock (@lock)
+            {
+
+                if (!used.TryGetValue(account, out var bytes))
+                {
+                    bytes           = Measure(ChatArchivePaths.AccountDirectory(Root, Account.ToString()));
+                    used[account]   = bytes;
+                }
+
+                Used = bytes;
+                return bytes < TotalBytesAllowed;
+
+            }
+
+        }
+
+        /// <summary>
+        /// Count a file that has just been written.
+        /// </summary>
+        private void Remember(JID    Account,
+                              Int64  Bytes)
+        {
+
+            var account = ChatArchivePaths.SafeName(Account.ToString());
+
+            lock (@lock)
+            {
+                used[account] = used.TryGetValue(account, out var bytes)
+                                    ? bytes + Bytes
+                                    : Bytes;
+            }
+
+        }
+
+        /// <summary>
+        /// What the files of one account take up on disk: the media directories
+        /// of its conversations, and nothing else - the conversations
+        /// themselves are lines of JSON written by this program and are not
+        /// what anybody else decides the size of.
+        /// </summary>
+        private static Int64 Measure(String AccountDirectory)
+        {
+
+            if (!Directory.Exists(AccountDirectory))
+                return 0;
+
+            var total = 0L;
+
+            try
+            {
+
+                foreach (var conversation in Directory.EnumerateDirectories(AccountDirectory))
+                {
+
+                    var directory = Path.Combine(conversation, ChatArchivePaths.MediaDirectoryName);
+
+                    if (!Directory.Exists(directory))
+                        continue;
+
+                    foreach (var file in Directory.EnumerateFiles(directory))
+                        total += new FileInfo(file).Length;
+
+                }
+
+            }
+            catch (Exception)
+            {
+                // A directory that cannot be walked is one whose size is
+                // unknown, and an unknown size is treated as none: refusing to
+                // fetch anything ever again because of a permission error would
+                // be the worse mistake of the two.
+            }
+
+            return total;
+
+        }
+
+        #endregion
+
         #region (private static) ReadAtMostAsync(Response, CancellationToken)
 
         private static async Task<(Byte[]? Content, String? Problem)> ReadAtMostAsync(HttpResponseMessage  Response,
@@ -405,7 +541,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         {
 
             using var stream  = await Response.Content.ReadAsStreamAsync(CancellationToken);
-            using var buffer  = new MemoryStream();
+
+            // Sized from what the server announced, where that is a size worth
+            // believing: a MemoryStream that has to grow doubles its buffer, so
+            // the last doubling of a 64 MiB file asks for 64 MiB more than the
+            // file needs. The announcement is not trusted as a limit - the loop
+            // below still counts every byte - only as a guess at the shape of
+            // the allocation.
+            var announced     = Response.Content.Headers.ContentLength ?? 0;
+
+            using var buffer  = new MemoryStream(announced > 0 && announced <= MaxBytes
+                                                     ? (Int32) announced
+                                                     : 0);
 
             var chunk  = new Byte[81920];
             var total  = 0L;

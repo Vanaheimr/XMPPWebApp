@@ -365,6 +365,22 @@ is refused when the browser says it came from another site.
   Anything whose extension is not on that list is served as a download.
   Reading a stored file needs the session, like everything else below
   `/api/v1`: the pictures of a conversation are the conversation.
+- **What a peer can make grow has a number next to it.** How many messages
+  arrive, and how many of them hand over a file, is decided by whoever is
+  writing to this account — so every table that grows one entry per such message
+  needs a limit, and the disk needs one too. The files of an account may take up
+  2 GiB together; past that, fetching stops and nothing else happens. Nothing
+  already written is deleted and nothing said is lost — the conversations keep
+  being archived and the files stay where they were shared — because an archive
+  whose promise is that everything said is kept may not start deleting to make
+  room. Alongside that: at most 4096 messages are remembered as already fetched
+  for, at most 64 fetches may be outstanding before further links are left
+  alone, and three downloads run at once. That last number and the 64 MiB per
+  file are together what bounds the memory a download occupies: a file has to be
+  whole before it can be written, and an encrypted one has to be whole before
+  its tag can even be checked, so the way to make that smaller is a smaller
+  number and not a stream.
+
 - **The archive is the most private thing this program writes.** Everything
   that was ever said, in the clear, plus the files. It is git-ignored
   (`/chats/`); on Unix its files carry the permissions of the directory, so
