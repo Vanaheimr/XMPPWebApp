@@ -160,6 +160,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                           ChatStore?        Chats           = null,
                           ChatArchive?      Archive         = null,
                           TimeSpan?         HistoryWindow   = null,
+                          LoginThrottle?    Throttle        = null,
                           ILoggerFactory?   LoggerFactory   = null)
 
             : base(HTTPServer,
@@ -173,7 +174,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                       ?? "0.0.0";
 
             this.Sessions       = Sessions;
-            this.Throttle       = new LoginThrottle();
+
+            // Handed in by a test that would rather not spend eleven PBKDF2
+            // verifications and five seconds of pauses to reach the eleventh
+            // attempt.
+            this.Throttle       = Throttle ?? new LoginThrottle();
             this.AccountFile    = AccountFile;
             this.WebLoginFile   = WebLoginFile;
             this.Chats          = Chats ?? new ChatStore();

@@ -18,11 +18,21 @@ under `libs/`. What is in this repository is the front end: a C# process that
 holds the XMPP connection and answers a small JSON API, and a TypeScript page
 that talks to it.
 
-> **Maturity: experimental.** Both the XMPP account and the login of the page
-> itself are set up in the web app and kept in git-ignored files, and so are
-> the conversations: everything that is said is written to `chats/` in the
-> clear, month by month, and read back at the next start. Not for production
-> use.
+> **Maturity: beta.** What a stranger can reach is tested from outside, against
+> a running server on a real port: that a password on file does not follow a
+> changed endpoint, that an event stream is asked again for every event it
+> carries, that a sign-in is rationed before it is verified rather than after,
+> and that a file name never becomes a path. The suite runs on every push, on
+> Windows and on Debian 13, because two things here answer differently per
+> platform — a certificate chain and the rules a file name has to obey.
+>
+> What is open on purpose, and why this is not *stable*: everything said is
+> kept in the clear. Owner-only (0600, in the per-user data directory) and
+> nobody else's business, but in the clear — that is a decision, not an
+> oversight, and it means the machine this runs on is the trust boundary. There
+> is no OMEMO in the page and no MAM, and one account with one login is the
+> whole model. A web client for the person who runs it; not a service for
+> other people.
 
 ---
 
@@ -506,6 +516,18 @@ and — for a file the archive fetched — that what is shown is this web app's
 own copy and that the address it came from appears nowhere on the page. Node runs the TypeScript directly; the few DOM calls the rules make are
 answered by a stand-in that has no `innerHTML`, so that reaching for it would
 fail the test.
+
+And the API as a browser meets it: a real server on a real port, driven over
+HTTP. Everything else here tests a decision, and a decision that is right and
+never asked is worth nothing — so this is where the four gates are held to
+their places. That a stored password does not follow a changed endpoint. That
+an event stream stops carrying events the moment its session is signed out —
+two browsers, one of which goes on receiving, because silence that nobody
+contradicts proves nothing. That the eleventh sign-in attempt is refused faster
+than a wrong password is refused, which is how you tell a gate in front of the
+work from one behind it. And that a name in a media URL never becomes a path.
+Open any of those three gates in the handler and something in that fixture goes
+red; that was checked by opening them.
 
 The protocol is not checked here. Its suite lives with
 [Ratatoskr](https://github.com/Vanaheimr/Ratatoskr), in the submodule.

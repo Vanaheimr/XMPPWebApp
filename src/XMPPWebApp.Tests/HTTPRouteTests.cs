@@ -1,0 +1,630 @@
+/*
+ * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
+ * This file is part of XMPPWebApp <https://www.github.com/Vanaheimr/XMPPWebApp>
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#region Usings
+
+using System.Net;
+using System.Text;
+
+using Microsoft.Extensions.Logging;
+
+using NUnit.Framework;
+
+using Newtonsoft.Json.Linq;
+
+using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
+
+#endregion
+
+namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
+{
+
+    /// <summary>
+    /// The API as a browser meets it: a real server on a real port, answering
+    /// real requests.
+    /// </summary>
+    /// <remarks>
+    /// Everything else in this project tests a decision - may this password be
+    /// reused, is this session still live, is this source out of attempts - and
+    /// a decision that is right and never asked is worth nothing. Four of them
+    /// guard something now, and all four depend on sitting at the right place
+    /// in the right handler:
+    ///
+    /// <list type="bullet">
+    /// <item>the stored password is checked only when it came from the file,
+    /// after the settings were understood and before they are applied;</item>
+    /// <item>the session is checked for every event, before the write;</item>
+    /// <item>the ration and the ceiling are checked before the verification,
+    /// because a gate behind the work is no gate;</item>
+    /// <item>a name in a media URL is checked before it becomes a path.</item>
+    /// </list>
+    ///
+    /// Each of those was verified by hand, once, with curl. This fixture is
+    /// what makes them stay verified: move one of those lines and something
+    /// here goes red.
+    /// </remarks>
+    [TestFixture]
+    public class HTTPRouteTests
+    {
+
+        #region Data
+
+        private const String Username = "admin";
+        private const String Password = "correct-horse-battery-staple";
+
+        private String       root     = "";
+        private HTTPServer?  server;
+        private XMPPWebAPI?  api;
+        private Uri          origin   = new ("http://127.0.0.1/");
+        private Recorder     log      = new ();
+
+        #endregion
+
+        #region (private) Recorder
+
+        /// <summary>
+        /// What the API said while the test ran.
+        /// </summary>
+        /// <remarks>
+        /// For the one thing a client cannot see from outside: whether a gate
+        /// fired, or whether nothing simply happened to arrive. Those two look
+        /// identical over HTTP and mean opposite things.
+        /// </remarks>
+        private sealed class Recorder : ILoggerProvider, ILogger
+        {
+
+            private readonly List<String>  lines  = [];
+            private readonly Lock          @lock  = new();
+
+            public ILogger CreateLogger(String CategoryName) => this;
+            public IDisposable? BeginScope<TState>(TState State) where TState : notnull => null;
+            public Boolean IsEnabled(LogLevel Level) => true;
+            public void Dispose() { }
+
+            public void Log<TState>(LogLevel                         Level,
+                                    EventId                          EventId,
+                                    TState                           State,
+                                    Exception?                       Exception,
+                                    Func<TState, Exception?, String> Formatter)
+            {
+                lock (@lock) { lines.Add(Formatter(State, Exception)); }
+            }
+
+            /// <summary>
+            /// Waits for a line containing this text, or says false when none
+            /// came.
+            /// </summary>
+            public async Task<Boolean> WaitForAsync(String Text, TimeSpan Timeout)
+            {
+
+                var deadline = DateTimeOffset.UtcNow + Timeout;
+
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+
+                    lock (@lock)
+                    {
+                        if (lines.Any(line => line.Contains(Text, StringComparison.OrdinalIgnoreCase)))
+                            return true;
+                    }
+
+                    await Task.Delay(25);
+
+                }
+
+                return false;
+
+            }
+
+        }
+
+        #endregion
+
+        #region Setup / Teardown
+
+        [SetUp]
+        public async Task StartTheServer()
+        {
+
+            root = Path.Combine(Path.GetTempPath(), "XMPPWebApp-http-" + Guid.NewGuid().ToString("N"));
+
+            Directory.CreateDirectory(root);
+
+            Assert.That(WebLoginSettings.TryCreate(Username, Password, out var login, out var error), Is.True, error);
+
+            log     = new Recorder();
+
+            server  = await HTTPServer.StartNew(IPv4Address.Parse("127.0.0.1"));
+
+            api     = new XMPPWebAPI(
+                          server,
+                          new WebSessions(login!),
+                          new AccountFile (Path.Combine(root, "xmpp-account.json")),
+                          new WebLoginFile(Path.Combine(root, "web-login.json")),
+                          // Two attempts rather than ten: the point is the
+                          // answer at the line, and eight more PBKDF2
+                          // verifications do not make it truer.
+                          Throttle:       new LoginThrottle(Attempts: 2, Window: TimeSpan.FromMinutes(15)),
+                          LoggerFactory:  LoggerFactory.Create(builder => builder.AddProvider(log).SetMinimumLevel(LogLevel.Trace))
+                      );
+
+            origin  = new Uri($"http://127.0.0.1:{server.TCPPort}/");
+
+        }
+
+        [TearDown]
+        public async Task StopTheServer()
+        {
+
+            if (server is not null)
+                await server.Stop();
+
+            server = null;
+            api    = null;
+
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(root, true);
+            }
+            catch (Exception)
+            { }
+
+        }
+
+        #endregion
+
+        #region (private) Browser() / SignIn(...) / GetAsync(...) / PutAsync(...)
+
+        /// <summary>
+        /// A client that keeps its cookies, like the browser this API is for.
+        /// Two of them are two browsers.
+        /// </summary>
+        private HttpClient Browser()
+
+            => new (new HttpClientHandler {
+                        CookieContainer    = new CookieContainer(),
+                        UseCookies         = true,
+                        AllowAutoRedirect  = false
+                    }) {
+                   BaseAddress = origin,
+                   Timeout     = TimeSpan.FromSeconds(30)
+               };
+
+        private static Task<HttpResponseMessage> PostJSON(HttpClient Browser, String Path, JObject JSON)
+
+            => Browser.PostAsync(Path, new StringContent(JSON.ToString(), Encoding.UTF8, "application/json"));
+
+        private static Task<HttpResponseMessage> PutJSON(HttpClient Browser, String Path, JObject JSON)
+
+            => Browser.PutAsync(Path, new StringContent(JSON.ToString(), Encoding.UTF8, "application/json"));
+
+        private static Task<HttpResponseMessage> SignIn(HttpClient Browser, String? WithPassword = null)
+
+            => PostJSON(Browser, "api/v1/auth/login",
+                        new JObject(new JProperty("username", Username),
+                                    new JProperty("password", WithPassword ?? Password)));
+
+        private static async Task<String> ErrorOf(HttpResponseMessage Response)
+        {
+
+            var body = await Response.Content.ReadAsStringAsync();
+
+            try
+            {
+                return JObject.Parse(body).Value<String>("error") ?? body;
+            }
+            catch (Exception)
+            {
+                return body;
+            }
+
+        }
+
+        #endregion
+
+
+        #region WithoutASession_EveryRouteRefuses()
+
+        [Test]
+        public async Task WithoutASession_EveryRouteRefuses()
+        {
+
+            using var browser = Browser();
+
+            var status   = await browser.GetAsync("api/v1/status");
+            var account  = await browser.GetAsync("api/v1/account");
+            var events   = await browser.GetAsync("api/v1/events");
+            var media    = await browser.GetAsync("api/v1/chats/alice@example.org/media/20260914T120000Z_x.png");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(status. StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized));
+                Assert.That(account.StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized));
+                Assert.That(events. StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "the stream is checked before it is opened");
+                Assert.That(media.  StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "the pictures of a conversation are the conversation");
+            });
+
+        }
+
+        #endregion
+
+        #region TheRightPassword_SignsIn_AndTheWrongOneDoesNot()
+
+        [Test]
+        public async Task TheRightPassword_SignsIn_AndTheWrongOneDoesNot()
+        {
+
+            using var browser = Browser();
+
+            var wrong = await SignIn(browser, "not-it");
+
+            Assert.That(wrong.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+
+            var right = await SignIn(browser);
+
+            var cookie = right.Headers.TryGetValues("Set-Cookie", out var values)
+                             ? String.Join("; ", values)
+                             : "";
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(right.StatusCode,  Is.EqualTo(HttpStatusCode.OK));
+                Assert.That(cookie,            Does.Contain("HttpOnly"),          "not readable by script");
+                Assert.That(cookie,            Does.Contain("SameSite=strict"),   "and not sent by another site");
+                Assert.That(cookie,            Does.Not.Contain(Password),        "and it carries a token, not the password");
+            });
+
+            Assert.That((await browser.GetAsync("api/v1/status")).StatusCode,
+                        Is.EqualTo(HttpStatusCode.OK),
+                        "and the session opens the rest");
+
+        }
+
+        #endregion
+
+        #region TooManyAttempts_Answer429_BeforeAnyHashing()
+
+        /// <summary>
+        /// The ration, from outside. What it proves that a unit test cannot is
+        /// that the gate is in the handler and in front of the verification:
+        /// the refusal arrives without the half-second pause a wrong password
+        /// costs, which is the pause that only happens after a verification.
+        /// </summary>
+        [Test]
+        public async Task TooManyAttempts_Answer429_BeforeAnyHashing()
+        {
+
+            using var browser = Browser();
+
+            Assert.That((await SignIn(browser, "no")).StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), "one");
+            Assert.That((await SignIn(browser, "no")).StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), "two");
+
+            var started  = DateTimeOffset.UtcNow;
+            var refused  = await SignIn(browser, "no");
+            var took     = DateTimeOffset.UtcNow - started;
+
+            var retryAfter = refused.Headers.RetryAfter?.Delta;
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(refused.StatusCode,  Is.EqualTo(HttpStatusCode.TooManyRequests));
+
+                Assert.That(retryAfter,          Is.Not.Null, "and it says when it is worth asking again");
+                Assert.That(retryAfter!.Value,   Is.GreaterThan(TimeSpan.Zero));
+
+                Assert.That(took,                Is.LessThan(XMPPWebAPI.FailedLoginDelay),
+                            "and it cost less than one wrong password does - the gate is in front of the work, not behind it");
+
+            });
+
+            Assert.That(await ErrorOf(refused), Does.Contain("Too many"));
+
+            // The right password does not buy its way past the ration either:
+            // what is rationed is the asking.
+            Assert.That((await SignIn(browser)).StatusCode,
+                        Is.EqualTo(HttpStatusCode.TooManyRequests));
+
+        }
+
+        #endregion
+
+        #region TheStoredPassword_DoesNotFollowAChangedEndpoint()
+
+        /// <summary>
+        /// The account page is never given the password, and this is the route
+        /// that could hand it to somebody else anyway: an empty password field
+        /// keeps the one on file, so a session that named another server would
+        /// have the login walk over to it.
+        /// </summary>
+        [Test]
+        public async Task TheStoredPassword_DoesNotFollowAChangedEndpoint()
+        {
+
+            using var browser = Browser();
+
+            await SignIn(browser);
+
+            var saved = await PutJSON(browser, "api/v1/account",
+                                      new JObject(new JProperty("jid",       "alice@example.org"),
+                                                  new JProperty("password",  "s3cr3t-on-file"),
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws")));
+
+            Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
+
+            // No password, another endpoint: this is the attack.
+            var moved = await PutJSON(browser, "api/v1/account",
+                                      new JObject(new JProperty("jid",       "alice@example.org"),
+                                                  new JProperty("websocket", "wss://collector.example/ws"),
+                                                  new JProperty("minimumSasl", "PLAIN")));
+
+            Assert.Multiple(async () =>
+            {
+                Assert.That(moved.StatusCode,        Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(await ErrorOf(moved),    Does.Contain("collector.example"), "and it says where it would have gone");
+            });
+
+            // The same endpoint without a password is still the convenience it
+            // was meant to be.
+            var kept = await PutJSON(browser, "api/v1/account",
+                                     new JObject(new JProperty("jid",       "alice@example.org"),
+                                                 new JProperty("websocket", "wss://127.0.0.1:1/ws"),
+                                                 new JProperty("minimumSasl", "SCRAM-SHA-1")));
+
+            Assert.That(kept.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(kept));
+
+            // And the endpoint on file never moved.
+            var account = JObject.Parse(await (await browser.GetAsync("api/v1/account")).Content.ReadAsStringAsync());
+
+            Assert.That(account["account"]?.Value<String>("websocket"),
+                        Is.EqualTo("wss://127.0.0.1:1/ws"));
+
+        }
+
+        #endregion
+
+        #region TheMediaRoute_RefusesANameThatIsAPath()
+
+        [Test]
+        public async Task TheMediaRoute_RefusesANameThatIsAPath()
+        {
+
+            using var browser = Browser();
+
+            await SignIn(browser);
+
+            var wanted = await browser.GetAsync("api/v1/chats/alice@example.org/media/..%2F..%2Fweb-login.json");
+
+            Assert.That(wanted.StatusCode,
+                        Is.AnyOf(HttpStatusCode.BadRequest, HttpStatusCode.NotFound),
+                        "a name is a name; it never becomes a path");
+
+            Assert.That(await wanted.Content.ReadAsStringAsync(),
+                        Does.Not.Contain("hash"),
+                        "and nothing of the login file comes back either way");
+
+        }
+
+        #endregion
+
+        #region (private) Listener
+
+        /// <summary>
+        /// An open event stream, read the way a browser reads one, counting the
+        /// events that arrive.
+        /// </summary>
+        private sealed class Listener : IDisposable
+        {
+
+            private readonly HttpClient               browser;
+            private readonly CancellationTokenSource  stopping  = new();
+            private readonly List<String>             ids       = [];
+            private readonly Lock                     @lock     = new();
+
+            /// <summary>Whether the server closed the stream.</summary>
+            public Boolean Ended { get; private set; }
+
+            /// <summary>How many events have arrived.</summary>
+            public Int32 Count
+            {
+                get { lock (@lock) { return ids.Count; } }
+            }
+
+            public Listener(HttpClient Browser)
+            {
+                browser = Browser;
+                _       = Task.Run(ReadAsync);
+            }
+
+            private async Task ReadAsync()
+            {
+
+                try
+                {
+
+                    using var response = await browser.SendAsync(
+                                             new HttpRequestMessage(HttpMethod.Get, "api/v1/events"),
+                                             HttpCompletionOption.ResponseHeadersRead,
+                                             stopping.Token
+                                         );
+
+                    response.EnsureSuccessStatusCode();
+
+                    using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(stopping.Token));
+
+                    while (!stopping.IsCancellationRequested)
+                    {
+
+                        var line = await reader.ReadLineAsync(stopping.Token);
+
+                        // null is the end of the stream: the server let go.
+                        if (line is null)
+                            break;
+
+                        if (line.StartsWith("id:", StringComparison.Ordinal))
+                            lock (@lock) { ids.Add(line); }
+
+                    }
+
+                }
+                catch (Exception)
+                {
+                    // Cancelled, or the connection went away. Either way this
+                    // stream is over, which is what Ended says.
+                }
+
+                Ended = true;
+
+            }
+
+            /// <summary>
+            /// Waits until more than <paramref name="Than"/> events have
+            /// arrived, or says false when they did not.
+            /// </summary>
+            public async Task<Boolean> WaitForMoreThanAsync(Int32 Than, TimeSpan Timeout)
+            {
+
+                var deadline = DateTimeOffset.UtcNow + Timeout;
+
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+
+                    if (Count > Than)
+                        return true;
+
+                    await Task.Delay(25);
+
+                }
+
+                return false;
+
+            }
+
+            public void Dispose()
+            {
+                stopping.Cancel();
+                stopping.Dispose();
+            }
+
+        }
+
+        #endregion
+
+        #region ARevokedSession_StopsReceivingEvents()
+
+        /// <summary>
+        /// The one that needs a server, a stream and two browsers, and cannot
+        /// be had any other way. A session is checked when the stream opens and
+        /// the stream then stays open for hours, so what is tested is what
+        /// happens to it when the session ends underneath.
+        /// </summary>
+        /// <remarks>
+        /// The second browser is the instrument, not decoration: it is what
+        /// tells this test that events really were produced after the sign-out.
+        /// Without it, "the first stream received nothing more" would also be
+        /// true of a server that had simply gone quiet, and the test would pass
+        /// while proving nothing.
+        ///
+        /// What produces the events is an account pointed at a closed port -
+        /// connecting, failing, reconnecting - which is a steady supply of
+        /// connection events and needs nothing outside this machine.
+        ///
+        /// What this does NOT assert is that the server hangs up promptly. The
+        /// handler stops writing and lets go of its subscription - the log line
+        /// below is that happening - but the connection was still open twenty
+        /// seconds later when this was written, which is a question for the
+        /// layer underneath and not for the gate. It costs nothing that
+        /// matters here: nothing travels either way. It does mean a browser
+        /// whose session was ended may sit on a silent stream until it asks for
+        /// something else, which is when it learns - the reconnect asserted at
+        /// the end is that moment.
+        /// </remarks>
+        [Test]
+        public async Task ARevokedSession_StopsReceivingEvents()
+        {
+
+            using var goes  = Browser();
+            using var stays = Browser();
+
+            await SignIn(goes);
+            await SignIn(stays);
+
+            using var listenGoes  = new Listener(goes);
+            using var listenStays = new Listener(stays);
+
+            // Something to listen to: an account that cannot connect, and keeps
+            // saying so.
+            var saved = await PutJSON(stays, "api/v1/account",
+                                      new JObject(new JProperty("jid",       "alice@example.org"),
+                                                  new JProperty("password",  "s3cr3t-on-file"),
+                                                  new JProperty("websocket", "wss://127.0.0.1:1/ws")));
+
+            Assert.That(saved.StatusCode, Is.EqualTo(HttpStatusCode.OK), await ErrorOf(saved));
+
+            Assert.Multiple(async () =>
+            {
+                Assert.That(await listenGoes. WaitForMoreThanAsync(0, TimeSpan.FromSeconds(20)), Is.True, "the stream carries events while its session is live");
+                Assert.That(await listenStays.WaitForMoreThanAsync(0, TimeSpan.FromSeconds(20)), Is.True, "and so does the other one");
+            });
+
+            var seenBeforeSignOut = listenGoes.Count;
+
+            var out_ = await goes.PostAsync("api/v1/auth/logout", null);
+
+            Assert.That(out_.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.NoContent));
+
+            // Two more events on the stream whose session is still live: that is
+            // what makes the silence on the other one mean something.
+            var seenByTheOther = listenStays.Count;
+
+            Assert.That(await listenStays.WaitForMoreThanAsync(seenByTheOther + 1, TimeSpan.FromSeconds(20)),
+                        Is.True,
+                        "events went on being produced after the sign-out");
+
+            // Read before the wait below, so that this says what it looks
+            // like it says: at the moment the live stream had gained two
+            // events, the revoked one had gained none.
+            Assert.That(listenGoes.Count,
+                        Is.EqualTo(seenBeforeSignOut),
+                        "and not one of them reached the stream whose session is gone");
+
+            // Silence over HTTP has two explanations that look identical from
+            // out here - the gate fired, or nothing happened to be sent - and
+            // they mean opposite things. The log is what tells them apart.
+            Assert.That(await log.WaitForAsync("its session is gone", TimeSpan.FromSeconds(20)),
+                        Is.True,
+                        "the stream was ended because the session was gone, and not merely quiet");
+
+            // What the browser actually acts on: EventSource reconnects after
+            // the stream drops, and the reconnect is what tells it to go back
+            // to the sign-in page.
+            using var reconnect = await goes.GetAsync("api/v1/events");
+
+            Assert.That(reconnect.StatusCode,
+                        Is.EqualTo(HttpStatusCode.Unauthorized),
+                        "and opening it again with the same cookie is refused");
+
+        }
+
+        #endregion
+
+    }
+
+}
