@@ -198,11 +198,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
                 const String secret = "Shall we meet at eight?";
 
-                var skipped = await alice.SendEncryptedMessageAsync(JID.Parse($"me@{xmpp!.Domain}"), secret);
+                var sent = await alice.SendEncryptedMessageAsync(JID.Parse($"me@{xmpp!.Domain}"), secret);
 
-                Assert.That(skipped, Is.Empty,
+                Assert.That(sent.Skipped, Is.Empty,
                             "Not every device could read along: " +
-                            String.Join(", ", skipped.Select(device => $"{device.Jid}/{device.DeviceId}: {device.Reason}")));
+                            String.Join(", ", sent.Skipped.Select(device => $"{device.Jid}/{device.DeviceId}: {device.Reason}")));
 
                 await Until(() => Message() is not null, "the decrypted message in the chat store");
 
@@ -498,6 +498,202 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                                                                             Math.Min(8, Fingerprint.Length - group * 8))));
 
         #endregion
+
+        #region WritingToSomebodyWithOmemo_GoesOutEncrypted()
+
+        /// <summary>
+        /// The app writes; Alice reads it decrypted, and the server never saw
+        /// the words.
+        /// </summary>
+        /// <remarks>
+        /// The sending half of everything the receiving tests check. The line
+        /// the page keeps has to say it went encrypted, because a sent line
+        /// with no lock and a sent line with one are the difference between
+        /// "they can read this" and "so can their server".
+        /// </remarks>
+        [Test]
+        public async Task WritingToSomebodyWithOmemo_GoesOutEncrypted()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                XMPPMessage? atAlice = null;
+                alice.OnEncryptedMessage += (timestamp, sender, message, _, ct) => { atAlice = message; return Task.CompletedTask; };
+
+                const String secret = "Eight suits me.";
+
+                var written = await Send($"alice@{xmpp!.Domain}", secret);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(written.Direction,  Is.EqualTo(MessageDirection.Outgoing));
+                    Assert.That(written.Body,       Is.EqualTo(secret));
+                    Assert.That(written.Encrypted,  Is.True,
+                                "the line the page keeps does not say it went encrypted");
+                });
+
+                await Until(() => atAlice is not null, "the message at Alice");
+
+                Assert.That(atAlice!.Body, Is.EqualTo(secret));
+
+                var stanzas = xmpp.Sessions.SelectMany(session => session.Received.Concat(session.Sent)).ToList();
+
+                Assert.That(stanzas.Any(stanza => stanza.Contains(secret, StringComparison.Ordinal)),
+                            Is.False,
+                            "the words stand in a stanza the server has seen");
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region WritingToSomebodyWithoutOmemo_GoesOutInTheClear()
+
+        /// <summary>
+        /// Nobody at the far end does OMEMO: the message goes in the clear, and
+        /// the line says so by carrying no lock.
+        /// </summary>
+        /// <remarks>
+        /// <b>The case that must not become a refusal.</b> Most of the world
+        /// does not do OMEMO; a client that could not write to them would be a
+        /// client nobody uses. What it must also not become is a silent
+        /// success - hence the lock per line rather than per conversation.
+        /// </remarks>
+        [Test]
+        public async Task WritingToSomebodyWithoutOmemo_GoesOutInTheClear()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                // Connected, and no OMEMO: there is no device list to fetch and
+                // nothing to encrypt to.
+                await alice.ConnectAsync();
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                XMPPMessage? atAlice = null;
+                alice.OnMessage += (timestamp, sender, message, ct) => { atAlice = message; return Task.CompletedTask; };
+
+                var written = await Send($"alice@{xmpp!.Domain}", "In the clear, then.");
+
+                Assert.That(written.Encrypted, Is.False,
+                            "a line that went in the clear must not wear a lock");
+
+                await Until(() => atAlice is not null, "the plain message at Alice");
+
+                Assert.That(atAlice!.Body, Is.EqualTo("In the clear, then."));
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region TheSwitch_TurnsItOffAndIsRemembered()
+
+        /// <summary>
+        /// Turned off for one conversation, the message goes in the clear -
+        /// and the setting is on disk, not in this process.
+        /// </summary>
+        /// <remarks>
+        /// The switch exists for clients whose OMEMO is broken in ways no
+        /// correctness here repairs. A switch that forgot would have to be
+        /// found and set again every morning, which is a thing people stop
+        /// doing.
+        /// </remarks>
+        [Test]
+        public async Task TheSwitch_TurnsItOffAndIsRemembered()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                var peer = JID.Parse($"alice@{xmpp!.Domain}");
+
+                api.Chats.SetEncryption(peer, false);
+                api.PlaintextChats!.Set(JID.Parse($"me@{xmpp.Domain}"), peer, true);
+
+                XMPPMessage? atAlice = null;
+                alice.OnMessage += (timestamp, sender, message, ct) => { atAlice = message; return Task.CompletedTask; };
+
+                var written = await Send(peer.ToString(), "Your client is broken, so: in the clear.");
+
+                Assert.That(written.Encrypted, Is.False,
+                            "the switch was set and the message went encrypted anyway");
+
+                await Until(() => atAlice is not null, "the plain message at Alice");
+
+                // And a second start on the same directory finds it again.
+                var again = new PlaintextChats(Path.Combine(root, "omemo", PlaintextChats.DefaultFileName));
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(again.IsOff(JID.Parse($"me@{xmpp.Domain}"), peer), Is.True,
+                                "the switch did not survive being read back");
+                    Assert.That(again.IsOff(JID.Parse($"someone-else@{xmpp.Domain}"), peer), Is.False,
+                                "and it belongs to the account that set it");
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Writes a message the way the page does, and gives back the line as
+        /// the conversation now holds it.
+        /// </summary>
+        /// <remarks>
+        /// Not through HTTP: the route reads a request and writes a status
+        /// code, and everything interesting about sending sits behind it. What
+        /// the route adds - the session, the cross-site refusal, the shape of
+        /// the JSON - has its own fixture.
+        /// </remarks>
+        private async Task<ChatMessage> Send(String To, String Body)
+        {
+
+            var (message, refusal) = await api!.SendToAsync(JID.Parse(To), Body);
+
+            Assert.That(message, Is.Not.Null, refusal ?? "the message was not sent, and nothing said why");
+
+            return message!;
+
+        }
 
         #region OnUnix_TheKeyStore_IsOwnerOnly()
 

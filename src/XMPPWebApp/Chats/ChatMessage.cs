@@ -304,6 +304,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// <param name="Unread">The number of received messages nobody has looked at yet.</param>
     /// <param name="LastMessage">The most recent line, for the preview.</param>
     /// <param name="LastActivity">When something last happened here; the list is sorted by it.</param>
+    /// <param name="EncryptionOn">
+    /// XEP-0384: whether this program may encrypt to this conversation at all -
+    /// false when somebody turned it off here.
+    /// </param>
     public sealed record ChatSummary(JID                Jid,
                                      String?            Name,
                                      Boolean            InRoster,
@@ -314,7 +318,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                      ChatState?         PeerChatState,
                                      Int32              Unread,
                                      ChatMessage?       LastMessage,
-                                     DateTimeOffset?    LastActivity)
+                                     DateTimeOffset?    LastActivity,
+                                     Boolean            EncryptionOn   = true)
     {
 
         /// <summary>
@@ -338,7 +343,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                    new JProperty("chatState",       PeerChatState?.ToString().ToLowerInvariant()),
                    new JProperty("unread",          Unread),
                    new JProperty("lastMessage",     LastMessage?.ToJSON()),
-                   new JProperty("lastActivity",    LastActivity?.ToString("o"))
+                   new JProperty("lastActivity",    LastActivity?.ToString("o")),
+
+                   // "auto" and not "on", because on is not what it does: it
+                   // encrypts when the far end can read it and says per line
+                   // what happened. Off is the only state somebody chose.
+                   new JProperty("encryption",      EncryptionOn ? "auto" : "off")
                );
 
     }

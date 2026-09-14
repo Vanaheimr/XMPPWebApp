@@ -63,7 +63,20 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             public ChatState?          PeerChatState    { get; set; }
             public Int32               Unread           { get; set; }
             public DateTimeOffset?     LastActivity     { get; set; }
+            public Boolean             EncryptionOn     { get; set; } = true;
             public List<ChatMessage>   Messages         { get; }      = [];
+
+            /// <summary>
+            /// Whether anything in here ever travelled encrypted (XEP-0384).
+            /// </summary>
+            /// <remarks>
+            /// Either direction counts. What this answers is "was this
+            /// conversation ever protected", and a peer whose devices suddenly
+            /// cannot be reached is the same suspicious event whichever way the
+            /// last encrypted line went.
+            /// </remarks>
+            public Boolean WasEncrypted
+                => Messages.Any(message => message.Encrypted);
 
             public ChatSummary Summary()
 
@@ -77,7 +90,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                         PeerChatState,
                         Unread,
                         Messages.Count > 0 ? Messages[^1] : null,
-                        LastActivity);
+                        LastActivity,
+                        EncryptionOn);
 
         }
 
@@ -86,6 +100,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         #region Data
 
         private readonly Dictionary<JID, Conversation>  chats  = [];
+
+        /// <summary>
+        /// The conversations somebody has expressly told this program to write
+        /// in the clear.
+        /// </summary>
+        /// <remarks>
+        /// Kept here rather than on the conversation, because it has to survive
+        /// a conversation that does not exist yet: the setting is read off the
+        /// disk at a start, and the chat it belongs to is only created when a
+        /// message turns up in it.
+        /// </remarks>
+        private readonly HashSet<JID>                   plaintext  = [];
+
         private readonly Lock                           @lock  = new();
         private          Int64                          sequence;
 
@@ -410,6 +437,78 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+        #region SetEncryption(Chat, On) / EncryptionOn(Chat) / WasEncrypted(Chat)
+
+        /// <summary>
+        /// Turn OMEMO off for one conversation, or back on.
+        /// </summary>
+        /// <remarks>
+        /// <b>Off is a decision somebody made, and it outranks everything this
+        /// program would work out for itself</b> - including the refusal to
+        /// fall back to plaintext in a conversation that has been encrypted
+        /// before. There are clients out there whose OMEMO is broken in ways no
+        /// amount of correctness on this side repairs, and the answer to those
+        /// is a switch rather than an unreachable contact.
+        /// </remarks>
+        /// <returns>The state it now has.</returns>
+        public Boolean SetEncryption(JID      Chat,
+                                     Boolean  On)
+        {
+            lock (@lock)
+            {
+
+                if (On)
+                    plaintext.Remove(Chat.Bare);
+                else
+                    plaintext.Add(Chat.Bare);
+
+                if (chats.TryGetValue(Chat.Bare, out var conversation))
+                {
+                    conversation.EncryptionOn = On;
+                    Changed(conversation);
+                }
+
+                return On;
+
+            }
+        }
+
+        /// <summary>
+        /// Whether this program may encrypt to this conversation at all.
+        /// </summary>
+        public Boolean EncryptionOn(JID Chat)
+        {
+            lock (@lock)
+                return !plaintext.Contains(Chat.Bare);
+        }
+
+        /// <summary>
+        /// The conversations encryption is currently turned off for.
+        /// </summary>
+        public IReadOnlyCollection<JID> PlaintextConversations()
+        {
+            lock (@lock)
+                return [.. plaintext];
+        }
+
+        /// <summary>
+        /// Whether anything in this conversation ever travelled encrypted.
+        /// </summary>
+        /// <remarks>
+        /// What it is for: a conversation that was encrypted and suddenly
+        /// cannot be any more is the shape of somebody having taken the
+        /// recipient's device list out of the way. Falling back to plaintext
+        /// there would hand them exactly what they were after.
+        /// </remarks>
+        public Boolean WasEncrypted(JID Chat)
+        {
+            lock (@lock)
+                return chats.TryGetValue(Chat.Bare, out var conversation) &&
+                       conversation.WasEncrypted;
+        }
+
+        #endregion
+
         #region LoadHistory(Chat, Messages)
 
         /// <summary>
@@ -693,8 +792,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
             if (!chats.TryGetValue(BareJid, out var conversation))
             {
-                conversation = new Conversation(BareJid);
+
+                conversation = new Conversation(BareJid) {
+                                   EncryptionOn = !plaintext.Contains(BareJid)
+                               };
+
                 chats.Add(BareJid, conversation);
+
             }
 
             return conversation;

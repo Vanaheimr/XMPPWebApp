@@ -120,9 +120,11 @@ export interface Message {
 /**
  * XEP-0384: what this side can do with encryption.
  *
- * Reading and writing are separate on purpose, because here they differ: this
- * app reads encrypted messages and sends in the clear. A single "encryption:
- * on" would be the most comfortable lie available.
+ * Reading and writing stay separate although they are the same answer today -
+ * they are different capabilities, and one of them could stop working on its
+ * own. Neither says whether a *particular* message will be encrypted: that
+ * depends on the devices at the far end and on the switch for that
+ * conversation, and every line says for itself.
  */
 export interface Omemo {
     /** whether OMEMO is configured at all (--no-omemo turns it off) */
@@ -150,6 +152,14 @@ export interface Chat {
     unread:          number;
     lastMessage:     Message | null;
     lastActivity:    string | null;
+    /**
+     * XEP-0384: 'auto' encrypts whenever the far end can read it, 'off' is
+     * somebody having said not to for this conversation.
+     *
+     * There is no 'on': this app encrypts when it can and writes in the clear
+     * when it cannot, and every line says which of the two it was.
+     */
+    encryption:      'auto' | 'off';
 }
 
 /** The XMPP connection of the web app. */
@@ -347,7 +357,10 @@ export const api = {
         send:      (chat: string, body: string)              => request<{ seq: number; message: Message }>('POST', `/chats/${jid(chat)}/messages`, { body }),
         read:      (chat: string)                            => request<void>                ('POST', `/chats/${jid(chat)}/read`),
         state:     (chat: string, state: ChatState)          => request<void>                ('POST', `/chats/${jid(chat)}/state`, { state }),
-        contact:   (chat: string, action: ContactAction)     => request<void>                ('POST', `/chats/${jid(chat)}/contact`, { action })
+        contact:   (chat: string, action: ContactAction)     => request<void>                ('POST', `/chats/${jid(chat)}/contact`, { action }),
+
+        /** XEP-0384: turn encryption off for this conversation, or back on. */
+        encryption: (chat: string, enabled: boolean)         => request<{ seq: number; encryption: 'auto' | 'off' }>('POST', `/chats/${jid(chat)}/encryption`, { enabled })
     }
 
 };

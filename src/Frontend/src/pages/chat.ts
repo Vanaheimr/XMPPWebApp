@@ -2,7 +2,7 @@ import { api, type Chat, type ContactAction, type Message } from '../api/client'
 import { auth } from '../auth';
 import { renderBody } from '../chat/links';
 import { store, type StoreEvent } from '../chat/store';
-import { html, must, render } from '../html';
+import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
 import { errorMessage, formatBytes, formatDay, formatListTime, formatTime, presenceLabel, preview, sameDay } from '../ui';
 
@@ -456,6 +456,7 @@ class ChatView {
                 <div class="peer-meta">${meta}</div>
             </div>
             <div class="peer-actions">
+                ${encryptionButton(chat)}
                 ${chat?.pendingRequest ? html`
                     <span class="muted small">Contact request</span>
                     <button type="button" class="btn small primary" data-action="accept">Accept</button>
@@ -471,8 +472,37 @@ class ChatView {
 
         this.peer.querySelector<HTMLButtonElement>('.back')?.addEventListener('click', () => this.select(null, true));
 
+        this.peer.querySelector<HTMLButtonElement>('button[data-encryption]')?.
+             addEventListener('click', () => void this.encryption(jid, chat?.encryption === 'off'));
+
         for (const button of this.peer.querySelectorAll<HTMLButtonElement>('button[data-action]'))
             button.addEventListener('click', () => void this.contact(jid, button.dataset.action as ContactAction));
+
+    }
+
+    /**
+     * Turn encryption off for this conversation, or back on.
+     *
+     * Asked for before turning it off, because the consequence outlives the
+     * click: it is remembered, and every message to this contact from now on
+     * goes in the clear until somebody turns it back on.
+     */
+    private async encryption(jid: string, enable: boolean): Promise<void> {
+
+        if (!enable && !window.confirm(
+                `Write to ${jid} without encryption from now on?\n\n` +
+                'Everything you send here will be readable by their server and yours. ' +
+                'This is remembered until you turn it back on.'))
+        {
+            return;
+        }
+
+        try {
+            await api.chats.encryption(jid, enable);
+        }
+        catch (error) {
+            this.toast('error', errorMessage(error));
+        }
 
     }
 
@@ -833,6 +863,34 @@ class ChatView {
 
 }
 
+
+/**
+ * The lock in the conversation header.
+ *
+ * Shown only when this app does OMEMO at all - without it the button would
+ * offer to turn off something that is not on. It says what the conversation
+ * does rather than what one message did: the lock on a message line is the
+ * record of that line, this is the setting.
+ */
+function encryptionButton(chat: Chat | undefined): HTMLFragment {
+
+    if (chat === undefined || store.connection?.omemo?.configured !== true)
+        return html``;
+
+    const off = chat.encryption === 'off';
+
+    return html`
+        <button type="button"
+                class="btn small encryption ${off ? 'off' : 'auto'}"
+                data-encryption="${chat.encryption}"
+                title="${off
+                            ? 'Encryption is off for this conversation - everything sent here goes in the clear. Click to turn it back on.'
+                            : 'Encrypted whenever they can read it; a lock on a line means that line went encrypted. Click to turn encryption off for this conversation.'}">
+            <i class="fa-solid ${off ? 'fa-lock-open' : 'fa-lock'}"></i>
+        </button>
+    `;
+
+}
 
 function jidFromURL(): string | null {
 

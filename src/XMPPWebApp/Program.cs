@@ -641,9 +641,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 Console.WriteLine("  chat archive   none (--no-archive): nothing said here survives this process");
 
             Console.WriteLine(api.OmemoDirectory is not null
-                                  ? $"  encryption     OMEMO on, keys in {api.OmemoDirectory}; encrypted messages are read, " +
-                                     "what this app sends goes in the clear"
-                                  : "  encryption     OMEMO off (--no-omemo): messages sent to this device encrypted cannot be read");
+                                  ? $"  encryption     OMEMO on, keys in {api.OmemoDirectory}; encrypted where the far end can " +
+                                     "read it, in the clear where it cannot, and every line says which"
+                                  : "  encryption     OMEMO off (--no-omemo): nothing is encrypted, and messages sent to this " +
+                                    "device encrypted cannot be read");
 
             if (api.Settings is not null)
                 Console.WriteLine($"  XMPP account   {api.Settings} ({(api.Source == AccountSource.Arguments ? "from the command line, not saved" : "from the account file")})");
@@ -841,8 +842,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine("                      older messages are loaded when the page is scrolled up to them");
             Console.WriteLine();
             Console.WriteLine("Encryption (XEP-0384, OMEMO):");
-            Console.WriteLine("  Messages sent to this device encrypted are read; what this app sends goes in the");
-            Console.WriteLine($"  clear. The keys live in {PrivatePaths.OmemoDirectoryName}/ below");
+            Console.WriteLine("  Encrypted whenever the far end has a device that can read it, in the clear when it");
+            Console.WriteLine("  has none, and never a silent fall back in a conversation that has been encrypted");
+            Console.WriteLine("  before. A padlock in the conversation turns it off for one contact, and that is");
+            Console.WriteLine($"  remembered. The keys live in {PrivatePaths.OmemoDirectoryName}/ below");
             Console.WriteLine($"  {PrivatePaths.Directory()}, one file per account, readable");
             Console.WriteLine("  by the owner alone - and not encrypted themselves: whoever reads that file reads");
             Console.WriteLine("  the conversations along.");

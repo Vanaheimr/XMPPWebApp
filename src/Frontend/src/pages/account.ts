@@ -501,8 +501,8 @@ function omemoFacts(omemo: Omemo | undefined): HTMLFragment {
 
     return html`
         <div class="conn-omemo">
-            \u{1F512} Encrypted messages are read.
-            What this app sends goes in the clear\u200a\u2014\u200aa lock beside a line means that line, not the conversation.
+            \u{1F512} Encrypted whenever the far end can read it, in the clear when it cannot\u200a\u2014\u200aand
+            the lock beside a line says which of the two that line was. The padlock in a conversation turns it off for that contact.
         </div>
         <div class="conn-fingerprint" title="Read this out to the person at the other end. Once they have it, a key that changes is a key that changed.">
             This device: <code>${fingerprintGroups(omemo.fingerprint)}</code>

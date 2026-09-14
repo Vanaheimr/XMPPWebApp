@@ -132,6 +132,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         public TimeSpan                  HistoryWindow  { get; }
 
         /// <summary>
+        /// XEP-0384: the conversations somebody turned encryption off for, or
+        /// null when there is no OMEMO at all.
+        /// </summary>
+        public PlaintextChats?           PlaintextChats { get; }
+
+        /// <summary>
         /// The Server-Sent Events source every browser hangs on (/api/v1/events).
         /// </summary>
         public HTTPEventSource<JObject>  Events         { get; }
@@ -210,6 +216,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             this.Archive        = Archive;
             this.HistoryWindow  = HistoryWindow ?? ChatArchive.DefaultHistoryWindow;
             this.OmemoDirectory = OmemoDirectory;
+
+            // Beside the keys, and only when there are keys: without OMEMO
+            // there is nothing to turn off.
+            this.PlaintextChats = OmemoDirectory is null
+                                      ? null
+                                      : new PlaintextChats(Path.Combine(OmemoDirectory, XMPPWebApp.Chats.PlaintextChats.DefaultFileName));
             this.loggerFactory  = LoggerFactory;
             this.logger         = LoggerFactory?.CreateLogger<XMPPWebAPI>() ?? NullLogger<XMPPWebAPI>.Instance;
 
@@ -291,6 +303,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/messages",     SendMessage,    HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/media/{name}", GetMedia,       HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/read",         MarkRead,       HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/chats/{jid}/encryption",   SetEncryption,  HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/state",        SendChatState,  HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/contact",      Contact,        HTTPMethod.POST);
 
@@ -802,14 +815,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (body.Length > MaxMessageLength)
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest, $"The message is longer than {MaxMessageLength} characters.");
 
-            if (Client is not { IsConnected: true } client)
+            if (Client is not { IsConnected: true })
                 return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
 
-            String messageId;
+            ChatMessage?  message;
+            String?       refusal;
 
             try
             {
-                messageId = await client.SendMessageAsync(jid, body);
+                (message, refusal) = await SendToAsync(jid, body);
             }
             catch (Exception e)
             {
@@ -817,7 +831,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"The message could not be sent: {e.Message}");
             }
 
-            var message = Chats.AddOutgoing(jid, messageId, body, DateTimeOffset.UtcNow);
+            if (message is null)
+                return ErrorJSON(Request, HTTPStatusCode.Conflict, refusal ?? "The message was not sent.");
 
             return JSONResponse(
                        Request,
@@ -825,6 +840,194 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                        new JObject(
                            new JProperty("seq",      Chats.Sequence),
                            new JProperty("message",  message.ToJSON())
+                       )
+                   );
+
+        }
+
+        #endregion
+
+        #region (internal) SendToAsync   (Jid, Body)
+
+        /// <summary>
+        /// Sends one message the way the policy says it should travel, and puts
+        /// the line into the conversation.
+        /// </summary>
+        /// <remarks>
+        /// Apart from the route because the two are different jobs: the route
+        /// reads a request and writes a status code, this decides what a
+        /// message is. Keeping them together meant the interesting half could
+        /// only be exercised through a signed-in browser.
+        ///
+        /// <b>The rule is asked twice, and it has to be.</b> Whether the far end
+        /// can be encrypted to is not knowable before trying - the device list
+        /// is fetched by the encrypting itself - so the first answer is "OMEMO
+        /// is on, encrypt", and if that message turns out to have reached
+        /// nobody, the same rule is asked again with what has just been learnt.
+        /// Falling back is safe precisely there and nowhere else: a message
+        /// nobody could open was not delivered, so sending it again in the clear
+        /// duplicates nothing.
+        /// </remarks>
+        /// <returns>
+        /// The line as the conversation now holds it, or null and the sentence
+        /// that says why it was not sent.
+        /// </returns>
+        internal async Task<(ChatMessage? Message, String? Refusal)> SendToAsync(JID     Jid,
+                                                                                String  Body)
+        {
+
+            if (Client is not { IsConnected: true } client)
+                return (null, NotConnectedText());
+
+            var turnedOff           = !Chats.EncryptionOn(Jid);
+            var wasEncryptedBefore  = Chats.WasEncrypted(Jid);
+
+            String               messageId;
+            OmemoIdentityCheck?  identity  = null;
+
+            switch (HowToSend(client.OmemoEnabled, turnedOff, wasEncryptedBefore))
+            {
+
+                case Delivery.Encrypted:
+                {
+
+                    var sent = await client.SendEncryptedMessageAsync(Jid, Body);
+
+                    if (sent.Readable)
+                    {
+
+                        messageId  = sent.MessageId;
+
+                        // Known rather than New: a session with this device
+                        // exists, because a message has just gone through it.
+                        // Nothing on the sending side asks the question the
+                        // receiving side asks, and calling it New would say
+                        // something about a key that was never checked.
+                        identity   = OmemoIdentityCheck.Known;
+
+                        if (sent.Skipped.Count > 0)
+                            PublishNotice("warning", SkippedText(Jid, sent.Skipped));
+
+                        break;
+
+                    }
+
+                    if (HowToSend(false, turnedOff, wasEncryptedBefore) == Delivery.Refused)
+                        return (null, CannotEncryptText(Jid, sent));
+
+                    logger.LogInformation("OMEMO: {Jid} has no device that can read an encrypted message; sending in the clear", Jid);
+
+                    messageId = await client.SendMessageAsync(Jid, Body);
+                    break;
+
+                }
+
+                case Delivery.Refused:
+                    return (null, CannotEncryptText(Jid, null));
+
+                default:
+                    messageId = await client.SendMessageAsync(Jid, Body);
+                    break;
+
+            }
+
+            return (Chats.AddOutgoing(Jid, messageId, Body, DateTimeOffset.UtcNow, Identity: identity),
+                    null);
+
+        }
+
+        /// <summary>
+        /// Why a message was not sent: this conversation has been encrypted
+        /// before and cannot be now.
+        /// </summary>
+        /// <remarks>
+        /// <b>A refusal has to be actionable or it is just an obstacle.</b> The
+        /// two things that produce this are a contact who has genuinely removed
+        /// every OMEMO device, and somebody who has taken their device list out
+        /// of the way - and the reader cannot tell them apart either, which is
+        /// exactly why the program does not quietly pick one. So it names both
+        /// and names the way out.
+        /// </remarks>
+        private static String CannotEncryptText(JID         Jid,
+                                                OmemoSent?  Sent)
+
+            => $"This conversation has been encrypted before, and {Jid} now has no device that can read an " +
+               "encrypted message. Either they removed their last one, or somebody took their device list out " +
+               "of the way - from here the two look the same, so this was not sent in the clear. Ask them " +
+               "through another channel, or turn encryption off for this conversation if you know why." +
+               (Sent?.Skipped.Count > 0
+                    ? $" ({Describe(Sent.Skipped)})"
+                    : "");
+
+        /// <summary>
+        /// Which devices of the recipient could not be written to, for a
+        /// message that did go out to the others.
+        /// </summary>
+        private static String SkippedText(JID                                Jid,
+                                          IReadOnlyList<OmemoSkippedDevice>  Skipped)
+
+            => $"The message to {Jid} went out encrypted, but not every device can read it: {Describe(Skipped)}. " +
+               "Those devices will show nothing at all rather than something unreadable.";
+
+        private static String Describe(IReadOnlyList<OmemoSkippedDevice> Skipped)
+
+            => String.Join(", ",
+                           Skipped.Select(device => device.DeviceId == 0
+                                                        ? $"{device.Jid} ({device.Reason})"
+                                                        : $"{device.Jid} device {device.DeviceId} ({device.Reason})"));
+
+        #endregion
+
+        #region (private) SetEncryption  (Request)
+
+        /// <summary>
+        /// POST /api/v1/chats/{jid}/encryption with {"enabled"}: turns OMEMO
+        /// off for this conversation, or back on.
+        /// </summary>
+        /// <remarks>
+        /// <b>Off is not a preference, it is a decision with a consequence</b>,
+        /// so it is stored where it survives a restart and the browser is told
+        /// the state it ended in rather than the state it asked for. What it is
+        /// for: clients whose OMEMO is broken in ways no correctness on this
+        /// side repairs - and the alternative to a switch is a contact who
+        /// cannot be written to at all.
+        ///
+        /// Not behind the account gate. It changes what one conversation does,
+        /// not who this program is; a stolen session that turns encryption off
+        /// has to write the message too, and the messages are what the session
+        /// already opens.
+        /// </remarks>
+        private Task<HTTPResponse> SetEncryption(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return Task.FromResult(refused);
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
+
+            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
+                return Task.FromResult(errorResponse);
+
+            if (json.Value<Boolean?>("enabled") is not Boolean enabled)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "'enabled' has to be true or false."));
+
+            var on = Chats.SetEncryption(jid, enabled);
+
+            if (Settings is not null)
+                PlaintextChats?.Set(Settings.BareJID, jid, !on);
+
+            return Task.FromResult(
+                       JSONResponse(
+                           Request,
+                           HTTPStatusCode.OK,
+                           new JObject(
+                               new JProperty("seq",         Chats.Sequence),
+                               new JProperty("encryption",  on ? "auto" : "off")
+                           )
                        )
                    );
 

@@ -298,6 +298,131 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         #endregion
 
 
+        #region TheSendingPolicy()
+
+        /// <summary>
+        /// Every case of the rule that decides what a message travels as.
+        /// </summary>
+        /// <remarks>
+        /// One table rather than four tests, because the rule is one expression
+        /// and what is worth seeing is the shape of it: off wins over
+        /// everything, then encryption when it is possible, and the refusal
+        /// only where falling back would be a downgrade somebody arranged.
+        /// </remarks>
+        [TestCase(true,  false, false, XMPPWebAPI.Delivery.Encrypted, TestName = "Encrypt when the far end can read it")]
+        [TestCase(true,  false, true,  XMPPWebAPI.Delivery.Encrypted, TestName = "... and go on encrypting where it has been encrypted")]
+        [TestCase(false, false, false, XMPPWebAPI.Delivery.Plain,     TestName = "In the clear where it has never been otherwise")]
+        [TestCase(false, false, true,  XMPPWebAPI.Delivery.Refused,   TestName = "But never fall back in a conversation that was encrypted")]
+        [TestCase(true,  true,  false, XMPPWebAPI.Delivery.Plain,     TestName = "Off means off")]
+        [TestCase(false, true,  true,  XMPPWebAPI.Delivery.Plain,     TestName = "... and off outranks the refusal as well")]
+        public void TheSendingPolicy(Boolean               CanEncrypt,
+                                     Boolean               TurnedOff,
+                                     Boolean               WasEncryptedBefore,
+                                     XMPPWebAPI.Delivery   Expected)
+        {
+
+            Assert.That(XMPPWebAPI.HowToSend(CanEncrypt, TurnedOff, WasEncryptedBefore),
+                        Is.EqualTo(Expected));
+
+        }
+
+        #endregion
+
+        #region AChatThatWasNeverEncrypted_DoesNotRefuse()
+
+        /// <summary>
+        /// The store answers the question the policy asks, and the answer is
+        /// per conversation.
+        /// </summary>
+        /// <remarks>
+        /// The refusal hangs on this: get it wrong in the generous direction
+        /// and somebody cannot write to a contact who never did OMEMO at all.
+        /// Either direction counts as "was encrypted" - a peer whose devices
+        /// vanish is the same event whichever way the last protected line went.
+        /// </remarks>
+        [Test]
+        public void AChatThatWasNeverEncrypted_DoesNotRefuse()
+        {
+
+            var store = new ChatStore();
+
+            store.AddIncoming(alice, "alice@example.org/phone", "m1", "In the clear.", noon);
+            store.AddOutgoing(me,    "m2", "Also in the clear.", noon);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(store.WasEncrypted(alice), Is.False);
+                Assert.That(store.WasEncrypted(me),    Is.False);
+            });
+
+            store.AddIncoming(alice, "alice@example.org/phone", "m3", "Encrypted.", noon,
+                              Identity: OmemoIdentityCheck.Known);
+
+            store.AddOutgoing(me, "m4", "Encrypted the other way.", noon,
+                              Identity: OmemoIdentityCheck.Known);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(store.WasEncrypted(alice), Is.True,  "an encrypted line that came in");
+                Assert.That(store.WasEncrypted(me),    Is.True,  "an encrypted line that went out");
+                Assert.That(store.WasEncrypted(JID.Parse("nobody@example.org")), Is.False,
+                            "a conversation that does not exist was never encrypted");
+            });
+
+        }
+
+        #endregion
+
+        #region TheSwitch_SurvivesAConversationThatDoesNotExistYet()
+
+        /// <summary>
+        /// Encryption can be turned off for a conversation before there is one.
+        /// </summary>
+        /// <remarks>
+        /// Which is what a restart looks like: the settings are read off the
+        /// disk before a single message has arrived, and a switch that only
+        /// took effect on conversations already in memory would be off in the
+        /// file and on in the program.
+        /// </remarks>
+        [Test]
+        public void TheSwitch_SurvivesAConversationThatDoesNotExistYet()
+        {
+
+            var store = new ChatStore();
+
+            store.SetEncryption(alice, false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(store.EncryptionOn(alice), Is.False);
+                Assert.That(store.Count,               Is.Zero, "turning a switch does not open a conversation");
+            });
+
+            var message = store.AddIncoming(alice, "alice@example.org/phone", "m1", "Hello", noon);
+
+            store.Snapshot(out var chats);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(chats,                  Has.Count.EqualTo(1));
+                Assert.That(chats[0].EncryptionOn,  Is.False, "the conversation was created with the switch already set");
+                Assert.That(chats[0].ToJSON().Value<String>("encryption"), Is.EqualTo("off"));
+            });
+
+            store.SetEncryption(alice, true);
+            store.Snapshot(out chats);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(chats[0].EncryptionOn,  Is.True);
+                Assert.That(chats[0].ToJSON().Value<String>("encryption"), Is.EqualTo("auto"));
+            });
+
+        }
+
+        #endregion
+
+
         #region APlaintextCorrection_TakesTheLockOffTheLineItReplaces()
 
         /// <summary>

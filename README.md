@@ -26,15 +26,14 @@ that talks to it.
 > Windows and on Debian 13, because two things here answer differently per
 > platform — a certificate chain and the rules a file name has to obey.
 >
-> What is open on purpose, and why this is not *stable*: **OMEMO reads and does
-> not write.** A message sent to this device encrypted is decrypted and shown
-> with a lock on the line; what this app sends goes in the clear. And what is
-> kept is kept in the clear either way — the archive is written after
-> decrypting, owner-only (0600, in the per-user data directory) and nobody
-> else's business, but in the clear. That is a decision, not an oversight, and
-> it means the machine this runs on is the trust boundary. There is no MAM, and
-> one account with one login is the whole model. A web client for the person who
-> runs it; not a service for other people.
+> What is open on purpose, and why this is not *stable*: **what is kept is kept
+> in the clear.** The archive is written after decrypting — owner-only (0600,
+> in the per-user data directory) and nobody else's business, but in the clear.
+> OMEMO protects the wire and the server, not the disk of the machine that was
+> meant to read it. That is a decision, not an oversight, and it means the
+> machine this runs on is the trust boundary. There is no MAM, and one account
+> with one login is the whole model. A web client for the person who runs it;
+> not a service for other people.
 
 ---
 
@@ -103,15 +102,26 @@ that talks to it.
   when the upload has expired, an encrypted one is decrypted on the way in,
   and no outside host learns who is reading. What is fetched, and what it may
   be served back as, is narrow on purpose — see [Security notes](#security-notes).
-- **Encrypted messages, read.** A message that arrives OMEMO-encrypted
-  (XEP-0384) is decrypted and shown with 🔒 on its line — per line,
-  because what this app *sends* goes in the clear, and a lock on the
-  conversation would be wrong for half of what is in it. New devices are
+- **Encrypted messages, both ways.** OMEMO (XEP-0384), and the lock is drawn
+  per line rather than per conversation — because a conversation can hold
+  both, and a lock over all of it would be wrong for half the lines. **What
+  decides:** encrypted whenever the far end has a device that can read it, in
+  the clear when it has none, and *never* a silent fall back to the clear in a
+  conversation that has been encrypted before — that one is refused with a
+  reason, because a contact whose devices suddenly cannot be reached is what
+  somebody removing their device list looks like. New devices are
   trusted blindly, which is the only trust model that gets used: a procedure
   demanding a fingerprint comparison before the first message does not get
   followed, and unused encryption protects nobody. This device's own
   fingerprint is on the settings page, to read out to somebody — which is
   what makes a later change noticeable at all.
+
+  **And a padlock in the conversation header turns it off for that contact**,
+  remembered across restarts. Not a hedge: there are clients whose OMEMO is
+  broken in ways no correctness on this side repairs, and the alternative to a
+  switch is a contact who cannot be written to. It outranks everything above,
+  including the refusal — somebody who turns it off has been told what they
+  are turning off.
 
   **And blind trust cuts both ways, which is the half that costs something.**
   A device that has written before and turns up with a *different* identity key
@@ -136,7 +146,9 @@ that talks to it.
 
 Not implemented, as in the console: MUC/MIX group chat, MAM history (the
 archive here is this web app's own, not the server's), HTTP file upload,
-sending OMEMO (it is only read), avatars. The full picture of what the library
+avatars. Nor a way to *accept* a changed OMEMO identity key — and no button
+for it either, because a decision asked of somebody who has not been given the
+means to make it is worse than the question. The full picture of what the library
 speaks is in the
 [README of XMPPConsole](https://github.com/Vanaheimr/XMPPConsole#what-it-speaks-today).
 
@@ -700,6 +712,7 @@ src/XMPPWebApp/                  the C# process (net10.0)
     Chats/ChatMessage.cs         one line, one conversation, as JSON
     Chats/ChatArchive.cs         the conversations on disk: writing, and reading back
     Chats/ChatArchivePaths.cs    where a conversation goes, and what a JID may become
+    Chats/PlaintextChats.cs      the conversations encryption is turned off for
     Chats/MediaLinks.cs          which link in a body is a shared file
     Chats/MediaStore.cs          fetching one, and refusing most others
     XmlText.cs                   what XML 1.0 will not carry

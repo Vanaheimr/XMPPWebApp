@@ -377,6 +377,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // before the first message of the new one arrives.
             Archive?.UseAccount(NewSettings?.BareJID);
 
+            ApplyPlaintextChats(NewSettings?.BareJID);
+
             if (old is not null)
             {
 
@@ -791,6 +793,100 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
         #endregion
 
+        #region (private) ApplyPlaintextChats(Account)
+
+        /// <summary>
+        /// Puts the stored "write this one in the clear" switches into the chat
+        /// store for the account now in use.
+        /// </summary>
+        /// <remarks>
+        /// <b>Cleared first.</b> The switches belong to an account, and the one
+        /// leaving takes its own with it - carrying them over would silently
+        /// turn encryption off for a contact of the new account who happens to
+        /// share an address with a contact of the old one.
+        /// </remarks>
+        private void ApplyPlaintextChats(JID? Account)
+        {
+
+            if (PlaintextChats is null)
+                return;
+
+            foreach (var chat in Chats.PlaintextConversations())
+                Chats.SetEncryption(chat, true);
+
+            // JID is a struct, so the null check does not narrow it - Value is
+            // what the account actually is.
+            if (Account is not JID account)
+                return;
+
+            foreach (var chat in PlaintextChats.Chats(account))
+                Chats.SetEncryption(chat, false);
+
+        }
+
+        #endregion
+
+        #region (internal) HowToSend(CanEncrypt, TurnedOff, WasEncryptedBefore)
+
+        /// <summary>
+        /// What a message to one conversation travels as.
+        /// </summary>
+        public enum Delivery
+        {
+
+            /// <summary>OMEMO (XEP-0384).</summary>
+            Encrypted,
+
+            /// <summary>In the clear, and the line will say so.</summary>
+            Plain,
+
+            /// <summary>Not at all - see <see cref="HowToSend"/>.</summary>
+            Refused
+
+        }
+
+        /// <summary>
+        /// The whole sending policy, in one expression.
+        /// </summary>
+        /// <remarks>
+        /// <b>Automatic, with one thing it will not do.</b> Encrypt when the far
+        /// end can read it, otherwise write in the clear and let the line say so
+        /// - a lock per message rather than per conversation, because this
+        /// program does both and a lock on the conversation would be wrong for
+        /// half the lines in it.
+        ///
+        /// The exception is the case that matters: a conversation that <i>has</i>
+        /// been encrypted and suddenly cannot be. Falling back there would hand
+        /// whoever took the recipient's device list out of the way exactly what
+        /// they were after, and it would look to the writer like an ordinary
+        /// message. So it refuses instead, and says why.
+        ///
+        /// <b>Off outranks all of it</b>, including the refusal. There are
+        /// clients whose OMEMO is broken in ways no correctness on this side
+        /// repairs, and the answer to those is a switch rather than a contact
+        /// who cannot be written to. Somebody who turns it off has been told
+        /// what they are turning off.
+        ///
+        /// This is asked twice for one message, which is why it is a function
+        /// and not a branch: once before sending, with what the client can do,
+        /// and again if the encrypted message turns out to have reached nobody -
+        /// then with <paramref name="CanEncrypt"/> false, because that is what
+        /// it has just been shown to be.
+        /// </remarks>
+        /// <param name="CanEncrypt">Whether OMEMO is on and the far end reachable by it.</param>
+        /// <param name="TurnedOff">Whether somebody turned encryption off for this conversation.</param>
+        /// <param name="WasEncryptedBefore">Whether anything in this conversation ever travelled encrypted.</param>
+        internal static Delivery HowToSend(Boolean  CanEncrypt,
+                                           Boolean  TurnedOff,
+                                           Boolean  WasEncryptedBefore)
+
+            => TurnedOff           ? Delivery.Plain
+             : CanEncrypt          ? Delivery.Encrypted
+             : WasEncryptedBefore  ? Delivery.Refused
+             :                       Delivery.Plain;
+
+        #endregion
+
         #region (private) HandleCarbon    (Carbon)
 
         /// <summary>
@@ -1020,18 +1116,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// XEP-0384: what this side can and cannot do with encryption.
         /// </summary>
         /// <remarks>
-        /// <b>"sending: false" is in here on purpose.</b> This application reads
-        /// encrypted messages and writes in the clear, and that asymmetry is
-        /// the one thing a user must not have to infer. The page says it where
-        /// it says everything else about the connection, and the line beside
-        /// each message says which of the two that message was.
+        /// Reading and writing are named separately although they are now the
+        /// same answer, because they are different capabilities and one of them
+        /// could stop working on its own. What this cannot say is whether a
+        /// <i>particular</i> message will be encrypted - that depends on the
+        /// devices of the far end and on the switch for that conversation, and
+        /// it is answered per line rather than guessed at here.
         /// </remarks>
         private JObject OmemoJSON(XMPPClient Client)
 
             => new (
                    new JProperty("configured",   OmemoDirectory is not null),
                    new JProperty("receiving",    Client.OmemoEnabled),
-                   new JProperty("sending",      false),
+                   new JProperty("sending",      Client.OmemoEnabled),
                    new JProperty("deviceId",     Client.Omemo?.Identity.DeviceId),
                    new JProperty("fingerprint",  Client.Omemo?.Fingerprint)
                );

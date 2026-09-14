@@ -561,9 +561,19 @@ input, textarea, select {
     }
 
     .peer-actions {
+
         display:      flex;
         align-items:  center;
         gap:          0.4rem;
+
+        // The open padlock is the state worth noticing, so it is the one that
+        // gets a colour. A closed one is the ordinary case and should not look
+        // like an achievement.
+        .encryption.off {
+            color:         $color-error;
+            border-color:  $color-error;
+        }
+
     }
 
 }
