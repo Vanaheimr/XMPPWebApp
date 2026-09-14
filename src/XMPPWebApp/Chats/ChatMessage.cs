@@ -161,12 +161,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// and a year later the archive still knows how this particular
         /// sentence arrived.
         ///
-        /// <b><see cref="OmemoIdentityCheck.Changed"/> cannot arrive over the
-        /// wire today</b>, and that is not this record's doing: Ratatoskr
-        /// refuses to build a session on a second key and drops the message, so
-        /// nothing reaches this side to be marked. It is read and written all
-        /// the same - the value is what an archive from a later version will
-        /// carry, and dropping it on the way in would lose it silently.
+        /// <b>Only two of the three ever stand here.</b>
+        /// <see cref="OmemoIdentityCheck.Changed"/> belongs to a message that
+        /// was refused - a device reporting with a second key does not get a
+        /// session, and a program cannot tell a new installation from somebody
+        /// pushing in between - so there is no line for it to be on. That case
+        /// arrives as a notice of its own, carrying both fingerprints. The
+        /// value is still read and written, because an archive is read by
+        /// whatever comes later and quietly dropping a value is how a format
+        /// stops being one.
         /// </remarks>
         public OmemoIdentityCheck? Identity { get; init; }
 

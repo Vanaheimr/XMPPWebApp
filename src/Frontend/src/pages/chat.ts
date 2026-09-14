@@ -686,24 +686,6 @@ class ChatView {
 
         element.appendChild(body);
 
-        // The one thing blind trust leaves to notice, and it is not a detail
-        // for the grey line below: the same device wrote before, with another
-        // key. Not a reinstall - that comes back under a new device number and
-        // reads as new - but the same device with a different identity.
-        //
-        // No message carries this yet: the library drops such a message instead
-        // of decrypting it, so nothing arrives to be marked. It is rendered
-        // because an archive from a later version can hold it, and because this
-        // is where it will land when the library learns to say so.
-        if (message.identity === 'changed') {
-            const warning = document.createElement('div');
-            warning.className    = 'key-changed';
-            warning.textContent  = 'This device\u2019s key is not the one it used before.';
-            warning.title        = 'Either they reinstalled their client, or somebody else is writing as them. ' +
-                                   'There is no way to tell from here - ask them through another channel.';
-            element.appendChild(warning);
-        }
-
         const meta = document.createElement('div');
         meta.className = 'meta';
 

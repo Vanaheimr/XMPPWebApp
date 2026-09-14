@@ -86,11 +86,12 @@ export interface Media {
 /**
  * How the sending device's OMEMO identity key stood when a message arrived.
  *
- * 'new' is the ordinary case and not a warning: blind trust means the first
- * message from a device is read without anybody having compared a fingerprint.
- * 'changed' is the one that matters - the same device, a different key - and no
- * live message carries it yet, because the library drops such a message rather
- * than decrypting it.
+ * Only two of the three can ride on a message. 'new' is the ordinary case and
+ * not a warning: blind trust means the first message from a device is read
+ * without anybody having compared a fingerprint. 'changed' is the one that
+ * matters - the same device, a different key - and it never appears here,
+ * because such a message is refused and there is no line to mark. It arrives as
+ * a notice instead, with both fingerprints in it.
  */
 export type Identity = 'new' | 'known' | 'changed';
 

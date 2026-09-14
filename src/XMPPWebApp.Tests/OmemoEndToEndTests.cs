@@ -17,6 +17,8 @@
 
 #region Usings
 
+using Newtonsoft.Json.Linq;
+
 using NUnit.Framework;
 
 using org.GraphDefined.Vanaheimr.Hermod;
@@ -359,6 +361,141 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             }
 
         }
+
+        #endregion
+
+        #region AChangedIdentityKey_IsSaidOutLoud()
+
+        /// <summary>
+        /// A device that has written before turns up with another key: the
+        /// message is refused, and the page is told - with both fingerprints in
+        /// it.
+        /// </summary>
+        /// <remarks>
+        /// <b>The half blind trust is paid for with.</b> Reading the first
+        /// message from a device without a fingerprint comparison is a trade
+        /// against noticing a change afterwards; without this, such a device
+        /// simply stops arriving, and from the outside that is what nobody
+        /// writing looks like.
+        ///
+        /// The notice is checked for both fingerprints and not merely for
+        /// existing. The one on file is the one somebody may once have read out
+        /// to the person at the other end, and a warning naming only the new key
+        /// says "something changed" while leaving the reader no way to find out
+        /// what.
+        ///
+        /// The case is set up by seeding the key store before this side ever
+        /// opens it - which is also the only way round: nothing in the running
+        /// program can put a wrong key on file, and that is the point of it.
+        /// </remarks>
+        [Test]
+        public async Task AChangedIdentityKey_IsSaidOutLoud()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                // A key that is not Alice's, on file for exactly Alice's device.
+                // She knows nothing of it and writes in good faith, which is how
+                // the case looks from both ends.
+                var onFile = OmemoIdentity.Create().PublicIdentityKey;
+
+                Directory.CreateDirectory(Path.Combine(root, "omemo"));
+
+                new OmemoFileStore(Path.Combine(root, "omemo", ChatArchivePaths.SafeName($"me@{xmpp!.Domain}") + ".json")).
+                    RecordIdentity($"alice@{xmpp.Domain}",
+                                   alice.Omemo!.Identity.DeviceId,
+                                   onFile);
+
+                // And only now does this side start, on that store.
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                await alice.SendEncryptedMessageAsync(JID.Parse($"me@{xmpp.Domain}"), "Shall we meet at eight?");
+
+                var notice = await Notice();
+
+                Assert.That(notice, Is.Not.Null, "nothing was said about the changed key");
+
+                var text = notice!.Value<String>("text") ?? "";
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(notice.Value<String>("level"), Is.EqualTo("warning"));
+
+                    Assert.That(text, Does.Contain($"alice@{xmpp.Domain}"));
+
+                    Assert.That(text, Does.Contain(Groups(Convert.ToHexString(onFile).ToLowerInvariant())),
+                                "the fingerprint on file - the one somebody may have compared");
+
+                    Assert.That(text, Does.Contain(Groups(alice.Omemo.Fingerprint)),
+                                "and the one the device reports with now");
+
+                });
+
+                // Saying so is not accepting: no line appears in any chat.
+                Assert.That(Message(), Is.Null, "the refused message was shown anyway");
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// The first "notice" the API published, or null if none came within
+        /// the waiting time.
+        /// </summary>
+        /// <remarks>
+        /// <b>The token is not a nicety, it is the only way out.</b> The event
+        /// source replays its history and then subscribes to the live stream -
+        /// it is a Server-Sent Events feed, so of course it does not end. A
+        /// reader that only ever breaks out when it has found what it wanted
+        /// hangs forever on the case where the event never comes, which is
+        /// exactly the case a test has to be able to fail on.
+        /// </remarks>
+        private async Task<JObject?> Notice()
+        {
+
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+            try
+            {
+
+                await foreach (var published in api!.Events.GetAllEventsGreater("test", 0, deadline.Token))
+                {
+                    if (published.Subevent == "notice")
+                        return published.Data;
+                }
+
+            }
+            catch (OperationCanceledException)
+            {
+                // Nothing came. The caller says what that means.
+            }
+
+            return null;
+
+        }
+
+        /// <summary>
+        /// A fingerprint as the notice writes it.
+        /// </summary>
+        private static String Groups(String Fingerprint)
+
+            => String.Join(' ',
+                           Enumerable.Range(0, (Fingerprint.Length + 7) / 8)
+                                     .Select(group => Fingerprint.Substring(group * 8,
+                                                                            Math.Min(8, Fingerprint.Length - group * 8))));
 
         #endregion
 

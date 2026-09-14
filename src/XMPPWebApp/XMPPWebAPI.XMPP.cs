@@ -433,6 +433,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             client.OnMessage             += (timestamp, sender, message,      ct) => { if (Mine(sender)) HandleMessage    (message);      return Task.CompletedTask; };
             client.OnEncryptedMessage    += (timestamp, sender, message, omemo, ct) => { if (Mine(sender)) HandleEncrypted(message, omemo); return Task.CompletedTask; };
+            client.OnOmemoIdentityChanged += (timestamp, sender, change,   ct) => { if (Mine(sender)) HandleIdentityChanged(change);   return Task.CompletedTask; };
             client.OnCarbonMessage       += (timestamp, sender, carbon,       ct) => { if (Mine(sender)) HandleCarbon     (carbon);       return Task.CompletedTask; };
             client.OnChatState           += (timestamp, sender, from, state,  ct) => { if (Mine(sender)) HandleChatState  (from, state);  return Task.CompletedTask; };
             client.OnChatMarker          += (timestamp, sender, marker,       ct) => { if (Mine(sender)) HandleChatMarker (marker);       return Task.CompletedTask; };
@@ -524,17 +525,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// to paper over here; it is written down rather than worked around
         /// silently.
         ///
-        /// <b>And one thing never arrives at all:</b>
-        /// <see cref="OmemoIdentityCheck.Changed"/>. The library detects the
-        /// second key under a device where it has to - inside the key exchange -
-        /// and refuses to build the session, so the message is dropped and
-        /// nothing is raised. Which means the one alarm blind trust exists for
-        /// is, in this application, currently a line in a log nobody is reading:
-        /// a device that reports with another key simply falls silent here.
-        /// Fixing that is a small event on OmemoManager and belongs there, not
-        /// in a workaround on this side. Until then, what reaches this method is
+        /// <b>What reaches this method is
         /// <see cref="OmemoIdentityCheck.New"/> or
-        /// <see cref="OmemoIdentityCheck.Known"/> and nothing else.
+        /// <see cref="OmemoIdentityCheck.Known"/>, never
+        /// <see cref="OmemoIdentityCheck.Changed"/>.</b> A device reporting with
+        /// a second key has its message refused - a program cannot tell a new
+        /// installation from somebody pushing in between - so there is no line
+        /// to mark. That case arrives on an event of its own; see
+        /// <see cref="HandleIdentityChanged"/>.
         /// </remarks>
         private void HandleEncrypted(XMPPMessage     Message,
                                      OmemoDecrypted  Omemo)
@@ -572,6 +570,73 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             );
 
         }
+
+        #endregion
+
+        #region (private) HandleIdentityChanged(Change)
+
+        /// <summary>
+        /// XEP-0384: a device that has written before reports with a different
+        /// identity key - and its message was refused.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is what blind trust is paid for with.</b> Reading the first
+        /// message from a device without anybody comparing a fingerprint is a
+        /// deliberate trade, and what it is traded against is noticing a change
+        /// afterwards. Without this the device would simply stop arriving,
+        /// which from the outside is what nobody writing looks like.
+        ///
+        /// A notice and not a line in a conversation, because there is no line:
+        /// the message that carried the new key was refused and no text of it
+        /// exists on this side. Putting it in a chat would mean inventing one.
+        ///
+        /// Both fingerprints go into the text. The one on file is the one
+        /// somebody may once have read out to the person at the other end, and
+        /// without it the reader has nothing to compare against - a notice
+        /// naming only the new key says "something changed" and leaves them no
+        /// way to find out what.
+        ///
+        /// <b>Nothing is decided here, and there is nothing to decide with.</b>
+        /// This version has no way to accept a new key, and inventing a button
+        /// for it would be the worst of both: a decision asked of somebody who
+        /// has not been given the means to make it. What it can do is say so,
+        /// name the two fingerprints, and point at the one way of settling it
+        /// that works - asking the person through some other channel.
+        /// </remarks>
+        private void HandleIdentityChanged(OmemoIdentityChanged Change)
+        {
+
+            logger.LogWarning("OMEMO: {Jid} writes from device {Device} with the key {Offered}, " +
+                              "which is not the {Known} on file; the message was refused",
+                              Change.Jid, Change.DeviceId, Change.OfferedFingerprint, Change.KnownFingerprint);
+
+            PublishNotice("warning",
+                          $"{Change.Jid} wrote from device {Change.DeviceId} with a key this side has not seen " +
+                          $"before, and the message was not accepted. On file: {Groups(Change.KnownFingerprint)}. " +
+                          $"Offered now: {Groups(Change.OfferedFingerprint)}. Either they set that device up anew, " +
+                          "or somebody is writing as them - from here the two look the same, so ask them through " +
+                          "another channel.");
+
+        }
+
+        /// <summary>
+        /// A fingerprint in groups of eight.
+        /// </summary>
+        /// <remarks>
+        /// Sixty-four characters in one run is not something a human being
+        /// compares, and comparing it is the only thing it is for. The same
+        /// grouping the settings page uses for this side's own.
+        /// </remarks>
+        private static String Groups(String Fingerprint)
+
+            => String.Join(' ',
+                           Enumerable.Range(0, (Fingerprint.Length + 7) / 8)
+                                     .Select(group => Fingerprint.Substring(group * 8,
+                                                                            Math.Min(8, Fingerprint.Length - group * 8))));
+
+        #endregion
+
+        #region (private) EncryptedBelongsTo(Message, OwnBareJID)
 
         /// <summary>
         /// Which conversation a decrypted message belongs in, and whether it

@@ -684,19 +684,6 @@ input, textarea, select {
         text-align:  right;
     }
 
-    // Not in the grey meta line: a key that is not the one this device used
-    // before is the only thing blind trust leaves anybody to look at, and it
-    // has to be readable at a glance or it may as well not be there.
-    .key-changed {
-        margin-top:     0.3rem;
-        padding:        0.3rem 0.5rem;
-        border-radius:  4px;
-        background:     $color-error-bg;
-        color:          $color-error;
-        font-size:      0.75rem;
-        cursor:         help;
-    }
-
 }
 
 .composer {

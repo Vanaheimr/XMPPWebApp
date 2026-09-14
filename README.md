@@ -113,17 +113,18 @@ that talks to it.
   fingerprint is on the settings page, to read out to somebody — which is
   what makes a later change noticeable at all.
 
-  **One gap, named rather than glossed over.** Blind trust *before verification*
-  is meant to cut both ways: blind at the start, loud when a device that has
-  written before turns up with a different identity key. The second half is not
-  there yet. Ratatoskr detects that case inside the key exchange and refuses to
-  build the session — rightly, because a program cannot tell a new
-  installation from somebody pushing in between — but it drops the message
-  without raising anything, so the page shows nothing and that device simply
-  falls silent here. What it needs is a small event on the library's OMEMO
-  manager; the page already has the place to put it. Until then: a contact whose
-  encrypted messages stop arriving is worth asking about through another
-  channel.
+  **And blind trust cuts both ways, which is the half that costs something.**
+  A device that has written before and turns up with a *different* identity key
+  gets its message refused — rightly, because a new installation and somebody
+  pushing in between cannot be told apart from here — and the page says so,
+  naming the fingerprint on file beside the one just offered. That second half
+  did not exist: Ratatoskr detected the case correctly and raised nothing, so
+  the device simply fell silent and nothing said why, which is precisely the
+  failure blind trust is paid for with. It is an event on the library's OMEMO
+  manager now. There is still no way to *accept* a new key here — and no
+  button for it either, because a decision asked of somebody who has not been
+  given the means to make it is worse than the question. The way to settle it is
+  to ask the person through another channel.
 - **Contacts.** Start a chat with any JID, add somebody as a contact, accept or
   deny a contact request, remove a contact.
 - **Unicode.** Every script and every emoji, in both directions. What a
