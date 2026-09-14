@@ -28,6 +28,8 @@ using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 
+using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
@@ -244,7 +246,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             this.Root    = Path.GetFullPath(Root);
             this.logger  = LoggerFactory?.CreateLogger<ChatArchive>() ?? NullLogger<ChatArchive>.Instance;
 
-            Directory.CreateDirectory(this.Root);
+            OwnerOnlyFile.CreateDirectory(this.Root);
 
             this.media   = KeepMedia
                                ? new MediaStore(this.Root)
@@ -668,9 +670,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             try
             {
 
-                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+                OwnerOnlyFile.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
 
-                File.AppendAllText(Path, Content.ToString(), Encoding.UTF8);
+                OwnerOnlyFile.Append(Path, Content.ToString());
 
             }
             catch (Exception e)

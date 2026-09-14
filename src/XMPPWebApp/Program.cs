@@ -302,7 +302,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             #region The account: the command line for one run, else the file
 
-            var accountFile = new AccountFile(accountFilePath ?? Path.Combine(RepositoryRoot(), AccountFile.DefaultFileName));
+            // Filled by DefaultPath when something is still in the old place;
+            // printed with the rest of the header further down.
+            var movedPaths  = new List<String>();
+
+            var accountFile = new AccountFile(accountFilePath ?? PrivatePaths.For(AccountFile.DefaultFileName,      RepositoryRoot(), PrivatePaths.Directory(), movedPaths));
 
             AccountSettings?  startupSettings  = null;
             var               startupSource    = AccountSource.None;
@@ -345,7 +349,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             #region The web login: the file, or one made up for a first start
 
-            var webLoginFile = new WebLoginFile(webLoginFilePath ?? Path.Combine(RepositoryRoot(), WebLoginFile.DefaultFileName));
+            var webLoginFile = new WebLoginFile(webLoginFilePath ?? PrivatePaths.For(WebLoginFile.DefaultFileName,     RepositoryRoot(), PrivatePaths.Directory(), movedPaths));
 
             WebLoginSettings  webLogin;
             String?           generatedPassword  = null;
@@ -439,7 +443,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 try
                 {
                     archive = new ChatArchive(
-                                  archiveDirectory ?? Path.Combine(RepositoryRoot(), ChatArchive.DefaultDirectoryName),
+                                  archiveDirectory ?? PrivatePaths.For(ChatArchive.DefaultDirectoryName, RepositoryRoot(), PrivatePaths.Directory(), movedPaths),
                                   keepMedia,
                                   loggerFactory
                               );
@@ -594,6 +598,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             }
 
+            foreach (var moved in movedPaths)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"  ! {moved}");
+            }
+
             if (generatedPassword is not null)
             {
                 Console.WriteLine();
@@ -746,8 +756,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine($"                    every {RotatingCertificate.DefaultCheckInterval.TotalSeconds:0}s), so a renewal takes effect without a restart.");
             Console.WriteLine();
             Console.WriteLine("Chat archive:");
-            Console.WriteLine($"  --archive <dir>   where the conversations are kept (default: {ChatArchive.DefaultDirectoryName}/ below the");
-            Console.WriteLine("                    repository root): one directory per account, one per conversation,");
+            Console.WriteLine($"  --archive <dir>   where the conversations are kept (default: {ChatArchive.DefaultDirectoryName}/ below");
+            Console.WriteLine($"                    {PrivatePaths.Directory()}): one directory per account, one per conversation,");
             Console.WriteLine("                    one file per month, and the shared files beside them in media/");
             Console.WriteLine("  --no-archive      keep nothing; what is said is gone when the process is");
             Console.WriteLine("  --no-media        write the conversations, but do not fetch the files shared in them");
@@ -755,13 +765,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine("                      older messages are loaded when the page is scrolled up to them");
             Console.WriteLine();
             Console.WriteLine("Web login:");
-            Console.WriteLine($"  --web-login <file>  where the web login lives (default: {WebLoginFile.DefaultFileName} below the");
-            Console.WriteLine("                      repository root); the settings page reads and writes this file.");
+            Console.WriteLine($"  --web-login <file>  where the web login lives (default: {WebLoginFile.DefaultFileName} below");
+            Console.WriteLine($"                      {PrivatePaths.Directory()}); the settings page reads and writes it.");
             Console.WriteLine("                      Without it a password is made up at the first start and shown once.");
             Console.WriteLine();
             Console.WriteLine("XMPP account:");
-            Console.WriteLine($"  --account <file>  where the account settings live (default: {AccountFile.DefaultFileName} below the");
-            Console.WriteLine("                    repository root); the account page reads and writes this file");
+            Console.WriteLine($"  --account <file>  where the account settings live (default: {AccountFile.DefaultFileName} below");
+            Console.WriteLine($"                    {PrivatePaths.Directory()}); the account page reads and writes it");
             Console.WriteLine("  -j, --jid <jid>         an account for this run only, e.g. user@example.org (not saved to the file)");
             Console.WriteLine("  -p, --password <pw>     its password (visible in the process list - the account file is not)");
             Console.WriteLine("  -w, --ws <uri>          the WebSocket endpoint, e.g. wss://xmpp.example.org:5281/xmpp-websocket;");

@@ -142,8 +142,12 @@ Open <http://127.0.0.1:8080/>, sign in with that, and — on a fresh start — t
 settings page opens. Change the web login there to something you can remember;
 below it the XMPP account is waiting. Enter the JID, password and, optionally,
 the WebSocket endpoint, save, and the chats appear. The settings are written to
-`xmpp-account.json` and `web-login.json` below the repository root (both
-git-ignored), so the next start goes straight to the chat.
+`xmpp-account.json` and `web-login.json` in the per-user application data
+directory — `%LOCALAPPDATA%\XMPPWebApp` on Windows, `~/.local/share/XMPPWebApp`
+elsewhere — so the next start goes straight to the chat. They used to live below
+the repository root; a checkout that still has them there keeps working and says
+so on the console once, because a program may point out where its files belong
+but should not move somebody's files for them.
 
 To point the web app at an account without the page — for one run, without
 writing the file — pass it on the command line:
@@ -163,9 +167,9 @@ dotnet run --project src\XMPPWebApp\XMPPWebApp.csproj -- --jid user@example.org 
 | `--cert-pem <file>` | serve HTTPS with a PEM certificate, e.g. Let's Encrypt's `fullchain.pem` |
 | `--key-pem <file>` | its private key, e.g. `privkey.pem`; without it the key is expected in the certificate file itself |
 | `--dev [<dir>]` | serve the frontend from the webpack output directory on disk (default `src/Frontend/dist`) and reload the page whenever it changes, see [Development](#development) |
-| `--account <file>` | where the account settings live (default: `xmpp-account.json` below the repository root); the settings page reads and writes this file |
-| `--web-login <file>` | where the web login lives (default: `web-login.json` below the repository root). Without it a password is made up at the first start and shown once |
-| `--archive <dir>` | where the conversations are kept (default: `chats/` below the repository root) |
+| `--account <file>` | where the account settings live (default: `xmpp-account.json` in the application data directory); the settings page reads and writes this file |
+| `--web-login <file>` | where the web login lives (default: `web-login.json` there too). Without it a password is made up at the first start and shown once |
+| `--archive <dir>` | where the conversations are kept (default: `chats/` there as well) |
 | `--no-archive` | keep nothing: what is said is gone when the process is |
 | `--no-media` | write the conversations, but do not fetch the files shared in them |
 | `--history-days <n>` | how much of the archive is loaded at a start, default 31; older messages are loaded when the page is scrolled up to them |
@@ -273,9 +277,20 @@ is refused when the browser says it came from another site.
 - **The account file holds a working password.** `xmpp-account.json`, written
   by the account page, keeps the XMPP password in plain text — the same as the
   old constant, only in a file that is git-ignored rather than in the source.
-  On Unix it is created readable by its owner alone (0600); on Windows it is as
-  private as the directory it sits in. `--password` on the command line is no
-  better than the file and worse than the page: it lands in the process list.
+  On Unix it is created readable by its owner alone (0600); on Windows the
+  directory decides, which is why the directory moved — see the next point.
+  `--password` on the command line is no better than the file and worse than the
+  page: it lands in the process list.
+- **What is private is kept where the system keeps private things.**
+  `%LOCALAPPDATA%\XMPPWebApp` on Windows, `~/.local/share/XMPPWebApp` elsewhere.
+  It used to be the repository root, and a working copy is not a private place:
+  on Windows it is often not private at all, because a checkout on a data drive
+  inherits that drive's rights. On the machine this was written on that meant
+  `Users: ReadAndExecute` and `Authenticated Users: Modify` on a file holding an
+  XMPP password in the clear, while the same file under the profile has neither
+  entry. An ACL on each file would have been the other way to fix it, and the
+  worse one: it covers what this program writes and nothing else, while the
+  directory decides for everything that ever lands beside it.
 - **The web login is the whole of the page's own security.** One username, one
   password — kept in `web-login.json` as a PBKDF2-SHA256 PHC string
   (600 000 iterations), never in the clear, because this one only ever has to
@@ -382,9 +397,11 @@ is refused when the browser says it came from another site.
   number and not a stream.
 
 - **The archive is the most private thing this program writes.** Everything
-  that was ever said, in the clear, plus the files. It is git-ignored
-  (`/chats/`); on Unix its files carry the permissions of the directory, so
-  put it somewhere only you can read. `--no-archive` keeps nothing.
+  that was ever said, in the clear, plus the files. On Unix its directories are
+  created 0700 and its files 0600, which they were not at first: the credentials
+  were owner-only on a server while the conversations beside them took whatever
+  the umask happened to be, and 0644 is a readable conversation. On Windows the
+  directory decides, as ever. `--no-archive` keeps nothing.
 - **A renewed certificate is picked up without a restart.** A certificate
   given with `--cert` or `--cert-pem` is re-read when its file changes on
   disk - Hermod asks for the certificate per accepted connection, so the last
@@ -511,9 +528,6 @@ submodule bump has work in it.
 
 ```
 XMPPWebApp.slnx
-xmpp-account.json               the XMPP account (written by the settings page, git-ignored)
-web-login.json                  the login of the page, as a hash (written by it too, git-ignored)
-chats/                          the archive: every conversation and its files (git-ignored)
 src/XMPPWebApp/                  the C# process (net10.0)
     Program.cs                   the web login, arguments, HTTP server, account file
     XMPPWebAPI.cs                the JSON API and the event stream

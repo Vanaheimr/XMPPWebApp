@@ -22,6 +22,8 @@ using System.Net.Sockets;
 
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 
+using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
+
 #endregion
 
 namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
@@ -319,7 +321,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
                 var directory = ChatArchivePaths.MediaDirectory(Root, Account.ToString(), Peer.ToString());
 
-                Directory.CreateDirectory(directory);
+                OwnerOnlyFile.CreateDirectory(directory);
 
                 // The name the URL suggests is kept where it already says what
                 // the file is, and is given the extension of what the file is
@@ -335,7 +337,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                         : AllowedTypes[contentType!]
                                 );
 
-                await File.WriteAllBytesAsync(Path.Combine(directory, name), content!, CancellationToken);
+                await OwnerOnlyFile.WriteAllBytesAsync(Path.Combine(directory, name), content!, CancellationToken);
 
                 Remember(Account, content!.LongLength);
 

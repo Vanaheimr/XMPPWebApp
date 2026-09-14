@@ -134,7 +134,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Account
             var directory = System.IO.Path.GetDirectoryName(Path);
 
             if (!String.IsNullOrEmpty(directory))
-                Directory.CreateDirectory(directory);
+                OwnerOnlyFile.CreateDirectory(directory);
 
             OwnerOnlyFile.Write(Path, Settings.ToJSON(IncludePassword: true).ToString(Formatting.Indented) + Environment.NewLine);
 
