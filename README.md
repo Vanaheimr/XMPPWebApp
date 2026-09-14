@@ -284,7 +284,27 @@ is refused when the browser says it came from another site.
   ends every other session. A random 256-bit token in an
   `HttpOnly; SameSite=strict` cookie, `secure` when the server speaks TLS.
   Sessions end after 12 hours without use, after 7 days at the latest. A
-  failed sign-in waits half a second before it answers.
+  failed sign-in waits half a second before it answers — which slows a person
+  at a form and nothing else, see the next point.
+- **Signing in is rationed, because verifying a password is expensive on
+  purpose.** 600 000 rounds of PBKDF2 are what make the stored hash costly to
+  attack offline, and the same number is what makes `POST /api/v1/auth/login`
+  costly to answer for anybody who can reach the port. The half second above is
+  no defence against that: it delays the answer, not the attempt, and requests
+  are served concurrently — a thousand may be in flight, each waiting out its
+  own half second. So two limits sit in front of the hashing rather than behind
+  it. A ration per source (Hermod's token bucket: ten attempts, then one every
+  ninety seconds) answers 429 with `Retry-After`, which is what stops guessing.
+  A ceiling of two simultaneous verifications answers 503 to whatever does not
+  fit, which is what stops ten thousand sources — each with a ration of its own
+  — from turning every core of the machine into a password hasher. Two things
+  this does not solve, said rather than left to be found: behind a reverse proxy
+  every request arrives from the same address and shares one ration, since
+  `X-Forwarded-For` is deliberately not read (a header anybody may write is a
+  ration anybody may sidestep); and a distributed attack wide enough to fill the
+  bucket registry ends in everybody being refused rather than in an unbounded
+  table — the right way round for a program that serves one person, but a
+  lockout and not a shrug.
 - **An open event stream is asked again for every event it carries.** Every
   other route answers one request, and the check it made is exactly as old as
   the answer. The stream at `/api/v1/events` stays open for hours and keeps

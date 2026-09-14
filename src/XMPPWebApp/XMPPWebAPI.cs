@@ -101,6 +101,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         public WebSessions               Sessions    { get; }
 
         /// <summary>
+        /// What it costs to try the web login - the only route here that does
+        /// expensive work for somebody who has not signed in yet.
+        /// </summary>
+        public LoginThrottle             Throttle    { get; }
+
+        /// <summary>
         /// The conversations, as far as this process has seen them.
         /// </summary>
         public ChatStore                 Chats          { get; }
@@ -167,6 +173,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                       ?? "0.0.0";
 
             this.Sessions       = Sessions;
+            this.Throttle       = new LoginThrottle();
             this.AccountFile    = AccountFile;
             this.WebLoginFile   = WebLoginFile;
             this.Chats          = Chats ?? new ChatStore();
@@ -273,6 +280,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// POST /api/v1/auth/login with {"username", "password"}: the session
         /// cookie, or 401 after a short pause.
         /// </summary>
+        /// <remarks>
+        /// The only route here that does expensive work for somebody who has
+        /// not signed in: verifying the password is 600 000 rounds of PBKDF2,
+        /// and anybody who can reach the port can ask for them. Both gates
+        /// therefore sit in front of that work rather than behind it - see
+        /// <see cref="LoginThrottle"/> for why there are two of them and for
+        /// what the half second at the end is and is not.
+        /// </remarks>
         private async Task<HTTPResponse> Login(HTTPRequest Request)
         {
 
@@ -282,13 +297,60 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return errorResponse;
 
-            if (!Sessions.TryLogin(json.Value<String>("username"),
-                                   json.Value<String>("password"),
-                                   out var session))
+            var source    = LoginThrottle.SourceOf(Request);
+            var decision  = Throttle.Ask(source);
+
+            if (!decision.Allowed)
             {
 
-                logger.LogWarning("Web sign-in refused for {Remote}", Request.RemoteSocket);
+                logger.LogWarning("Web sign-in refused for {Remote}: out of attempts, {RetryAfter:0} seconds to the next one",
+                                  Request.RemoteSocket, decision.RetryAfter.TotalSeconds);
 
+                return RetryLaterJSON(Request,
+                                      HTTPStatusCode.TooManyRequests,
+                                      decision.RetryAfter,
+                                      "Too many sign-in attempts. Try again later.");
+
+            }
+
+            // Turned away rather than queued without end: whatever does not fit
+            // behind the ceiling is work this machine has no room for, and
+            // saying so costs nothing while doing it would cost a core.
+            if (!await Throttle.EnterVerifierAsync(Request.CancellationToken))
+            {
+
+                logger.LogWarning("Web sign-in refused for {Remote}: too many verifications at once", Request.RemoteSocket);
+
+                return RetryLaterJSON(Request,
+                                      HTTPStatusCode.ServiceUnavailable,
+                                      LoginThrottle.DefaultVerifierWait,
+                                      "Busy. Try again in a moment.");
+
+            }
+
+            Boolean  signedIn;
+            Session? session;
+
+            try
+            {
+                signedIn = Sessions.TryLogin(json.Value<String>("username"),
+                                             json.Value<String>("password"),
+                                             out session);
+            }
+            finally
+            {
+                Throttle.LeaveVerifier();
+            }
+
+            if (!signedIn || session is null)
+            {
+
+                logger.LogWarning("Web sign-in refused for {Remote}, {Remaining} attempt(s) left", Request.RemoteSocket, decision.RemainingTokens);
+
+                // Outside the ceiling above on purpose: this waits, it does not
+                // work, and a waiter holding a verifier slot would turn the
+                // pause into the very denial of service the slot is there to
+                // prevent.
                 await Task.Delay(FailedLoginDelay, Request.CancellationToken);
 
                 return ErrorJSON(Request, HTTPStatusCode.Unauthorized, "Wrong username or password.");
@@ -1329,6 +1391,24 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                    StatusCode,
                    new JObject(new JProperty("error", Message))
                );
+
+
+        /// <summary>
+        /// An error that says when it is worth asking again, as a header a
+        /// client can act on and a sentence a person can read.
+        /// </summary>
+        private static HTTPResponse RetryLaterJSON(HTTPRequest     Request,
+                                                   HTTPStatusCode  StatusCode,
+                                                   TimeSpan        RetryAfter,
+                                                   String          Message)
+
+            => new HTTPResponse.Builder(Request) {
+                   HTTPStatusCode  = StatusCode,
+                   ContentType     = HTTPContentType.Application.JSON_UTF8,
+                   Content         = Encoding.UTF8.GetBytes(new JObject(new JProperty("error", Message)).ToString(Formatting.None)),
+                   CacheControl    = "no-store",
+                   RetryAfter      = Math.Max(1, (Int32) Math.Ceiling(RetryAfter.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture)
+               }.WithCommonSecurityHeaders().AsImmutable;
 
 
         private static HTTPResponse JSONResponse(HTTPRequest     Request,
