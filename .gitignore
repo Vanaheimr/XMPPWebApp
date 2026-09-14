@@ -36,3 +36,10 @@ npm-debug.log*
 # shared. Written by the app, one directory per account and conversation.
 # The most private thing this program produces - never part of the repository.
 /chats/
+
+# A security review of this repository: which weaknesses are open, in which
+# file, on which line, and what an attacker would do with each. Worth having
+# beside the code and exactly wrong to publish with it - committing it here
+# would put the list of ways in on GitHub, next to the code it describes and
+# ahead of the fixes.
+/SECURITY-REPORT.md
