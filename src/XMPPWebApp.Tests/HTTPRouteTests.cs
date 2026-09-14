@@ -517,6 +517,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             }
 
+            /// <summary>
+            /// Waits for the server to close the stream, or says false when it
+            /// did not.
+            /// </summary>
+            public async Task<Boolean> WaitForTheEndAsync(TimeSpan Timeout)
+            {
+
+                var deadline = DateTimeOffset.UtcNow + Timeout;
+
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+
+                    if (Ended)
+                        return true;
+
+                    await Task.Delay(25);
+
+                }
+
+                return false;
+
+            }
+
             public void Dispose()
             {
                 stopping.Cancel();
@@ -546,15 +569,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// connecting, failing, reconnecting - which is a steady supply of
         /// connection events and needs nothing outside this machine.
         ///
-        /// What this does NOT assert is that the server hangs up promptly. The
-        /// handler stops writing and lets go of its subscription - the log line
-        /// below is that happening - but the connection was still open twenty
-        /// seconds later when this was written, which is a question for the
-        /// layer underneath and not for the gate. It costs nothing that
-        /// matters here: nothing travels either way. It does mean a browser
-        /// whose session was ended may sit on a silent stream until it asks for
-        /// something else, which is when it learns - the reconnect asserted at
-        /// the end is that moment.
+        /// The three things asserted at the end are three different claims and
+        /// all of them are needed. That no event arrived is the security one.
+        /// That the log says why is what tells a gate that fired apart from a
+        /// server that merely went quiet, which look identical over HTTP. And
+        /// that the connection closed is what the browser acts on: EventSource
+        /// finds out that it has been signed out by the stream ending and the
+        /// reconnect being refused. That last one did not hold when this was
+        /// written - Hermod read the keep-alive header of an SSE response and
+        /// went back to waiting for a request that was never coming - and it is
+        /// the reason for Hermod f903c583.
         /// </remarks>
         [Test]
         public async Task ARevokedSession_StopsReceivingEvents()
@@ -612,9 +636,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                         Is.True,
                         "the stream was ended because the session was gone, and not merely quiet");
 
-            // What the browser actually acts on: EventSource reconnects after
-            // the stream drops, and the reconnect is what tells it to go back
-            // to the sign-in page.
+            // And the connection goes, which is what a browser waits for: an
+            // SSE body has no framing of its own, so the close is the only way
+            // to say that this stream is over.
+            Assert.That(await listenGoes.WaitForTheEndAsync(TimeSpan.FromSeconds(20)),
+                        Is.True,
+                        "and the server let the connection go rather than holding one that will never carry anything again");
+
+            // What the browser does next: EventSource reconnects after the
+            // stream drops, and the reconnect is what sends it back to the
+            // sign-in page.
             using var reconnect = await goes.GetAsync("api/v1/events");
 
             Assert.That(reconnect.StatusCode,
