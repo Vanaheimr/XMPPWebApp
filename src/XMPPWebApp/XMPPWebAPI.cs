@@ -156,6 +156,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <param name="Chats">The chat store; an empty one by default.</param>
         /// <param name="Archive">Where the conversations are kept, or null to keep none.</param>
         /// <param name="HistoryWindow">How much of the archive is loaded at a start.</param>
+        /// <param name="OmemoDirectory">XEP-0384: where the OMEMO keys live, or null to do no OMEMO.</param>
         /// <param name="LoggerFactory">An optional logger factory, handed on to every XMPP client.</param>
         public XMPPWebAPI(HTTPServer        HTTPServer,
                           AccountFile       AccountFile,
@@ -166,6 +167,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                           ChatStore?        Chats           = null,
                           ChatArchive?      Archive         = null,
                           TimeSpan?         HistoryWindow   = null,
+                          String?            OmemoDirectory    = null,
                           String             DataDirectory     = "",
                           Boolean            SecureCookies     = false,
                           WebAuthnSettings?  WebAuthnSettings  = null,
@@ -207,6 +209,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             this.Chats          = Chats ?? new ChatStore();
             this.Archive        = Archive;
             this.HistoryWindow  = HistoryWindow ?? ChatArchive.DefaultHistoryWindow;
+            this.OmemoDirectory = OmemoDirectory;
             this.loggerFactory  = LoggerFactory;
             this.logger         = LoggerFactory?.CreateLogger<XMPPWebAPI>() ?? NullLogger<XMPPWebAPI>.Instance;
 

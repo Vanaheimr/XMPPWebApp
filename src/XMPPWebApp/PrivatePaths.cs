@@ -42,7 +42,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <summary>
         /// The directory this program makes for itself below the per-user one.
         /// </summary>
-        public const String ApplicationName = "XMPPWebApp";
+        public const String ApplicationName      = "XMPPWebApp";
+
+        /// <summary>
+        /// Where the OMEMO keys and sessions go, below <see cref="Directory"/>.
+        /// </summary>
+        /// <remarks>
+        /// A directory of its own rather than a file beside the others, because
+        /// there is one per account and the account can change while the
+        /// program runs. It is created 0700 on Unix - what lies in there is the
+        /// identity key and every chain key of every session, and it is not
+        /// encrypted.
+        /// </remarks>
+        public const String OmemoDirectoryName   = "omemo";
 
         #endregion
 

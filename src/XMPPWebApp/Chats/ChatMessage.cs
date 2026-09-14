@@ -145,6 +145,42 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// </summary>
         public MediaRef? Media        { get; init; }
 
+        /// <summary>
+        /// XEP-0384: how the sending device's identity key stood when this
+        /// line arrived - null for everything that did not arrive encrypted.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is the whole of what blind trust leaves to look at.</b> The
+        /// first message from a device is accepted without anybody having
+        /// compared a fingerprint, which is what makes the encryption get used
+        /// at all; the price is that the first one could always have been
+        /// somebody else.
+        ///
+        /// Kept per message and not per conversation, because that is where it
+        /// is true: the state of a chat says nothing about the line above it,
+        /// and a year later the archive still knows how this particular
+        /// sentence arrived.
+        ///
+        /// <b><see cref="OmemoIdentityCheck.Changed"/> cannot arrive over the
+        /// wire today</b>, and that is not this record's doing: Ratatoskr
+        /// refuses to build a session on a second key and drops the message, so
+        /// nothing reaches this side to be marked. It is read and written all
+        /// the same - the value is what an archive from a later version will
+        /// carry, and dropping it on the way in would lose it silently.
+        /// </remarks>
+        public OmemoIdentityCheck? Identity { get; init; }
+
+        /// <summary>
+        /// Whether this line travelled encrypted (XEP-0384).
+        /// </summary>
+        /// <remarks>
+        /// Derived and not stored, so that the lock and the reason for it
+        /// cannot come apart: a line claiming to be encrypted while naming no
+        /// device key would be a lock drawn over nothing.
+        /// </remarks>
+        public Boolean Encrypted
+            => Identity.HasValue;
+
 
         public JObject ToJSON()
 
@@ -161,6 +197,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                    new JProperty("corrected",  Corrected),
                    new JProperty("delivered",  Delivered),
                    new JProperty("displayed",  Displayed),
+                   new JProperty("encrypted",  Encrypted),
+                   new JProperty("identity",   Identity?.ToString().ToLowerInvariant()),
                    new JProperty("media",      Media?.ToJSON())
                );
 
@@ -215,12 +253,33 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                           Corrected  = JSON.Value<Boolean?>("corrected") ?? false,
                           Delivered  = JSON.Value<Boolean?>("delivered") ?? false,
                           Displayed  = JSON.Value<Boolean?>("displayed") ?? false,
+                          Identity   = TryParseIdentity(JSON.Value<String>("identity")),
                           Media      = MediaRef.TryParse(JSON["media"])
                       };
 
             return true;
 
         }
+
+        #endregion
+
+        #region (private, static) TryParseIdentity(Text)
+
+        /// <summary>
+        /// The identity check of an archive line, or null when the line names
+        /// none, or names something this version does not know.
+        /// </summary>
+        /// <remarks>
+        /// An unreadable value becomes "was not encrypted" rather than a guess.
+        /// Both ways of being wrong are wrong, and only one of them tells
+        /// somebody their conversation was protected when it was not.
+        /// </remarks>
+        private static OmemoIdentityCheck? TryParseIdentity(String? Text)
+
+            => Enum.TryParse<OmemoIdentityCheck>(Text, ignoreCase: true, out var check) &&
+               Enum.IsDefined(check)
+                   ? check
+                   : null;
 
         #endregion
 

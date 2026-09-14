@@ -1,6 +1,6 @@
-import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Confirmation, type Me, type Passkey, type SaslMechanism } from '../api/client';
+import { api, saslMechanisms, type AccountResponse, type AccountUpdate, type Confirmation, type Me, type Omemo, type Passkey, type SaslMechanism } from '../api/client';
 import { confirm as confirmWithPasskey, passkeysPossible, register as registerPasskey } from '../passkeys';
-import { html, must, render } from '../html';
+import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
 import { errorMessage, field } from '../ui';
 
@@ -477,8 +477,51 @@ function renderConnection(target: HTMLElement, response: AccountResponse): void 
         <div class="facts">
             <div><span class="dot ${dot}"></span> ${connectionLabel(response)}</div>
             ${connection.error ? html`<div class="conn-error">${connection.error}</div>` : ''}
+            ${omemoFacts(connection.omemo)}
         </div>
     `);
+
+}
+
+/**
+ * XEP-0384, said in the two sentences it takes to be true.
+ *
+ * Receiving and sending are named separately because they differ, and the
+ * fingerprint is here because it is the only thing anybody can do anything
+ * with: read it out to the person at the other end, and from then on a key
+ * that changes is a key that changed.
+ */
+function omemoFacts(omemo: Omemo | undefined): HTMLFragment {
+
+    if (omemo === undefined || !omemo.configured)
+        return html`<div class="conn-omemo">Encryption off: messages sent to this device encrypted cannot be read.</div>`;
+
+    if (!omemo.receiving)
+        return html`<div class="conn-omemo">Encryption not ready yet \u2013 this device has not been announced to the server.</div>`;
+
+    return html`
+        <div class="conn-omemo">
+            \u{1F512} Encrypted messages are read.
+            What this app sends goes in the clear\u200a\u2014\u200aa lock beside a line means that line, not the conversation.
+        </div>
+        <div class="conn-fingerprint" title="Read this out to the person at the other end. Once they have it, a key that changes is a key that changed.">
+            This device: <code>${fingerprintGroups(omemo.fingerprint)}</code>
+        </div>
+    `;
+
+}
+
+/**
+ * A fingerprint in groups of eight, because sixty-four hex characters in one
+ * run is not something a human being compares - and comparing it is the only
+ * thing it is for.
+ */
+function fingerprintGroups(Fingerprint: string | null): string {
+
+    if (Fingerprint === null)
+        return '\u2014';
+
+    return (Fingerprint.match(/.{1,8}/g) ?? [Fingerprint]).join(' ');
 
 }
 

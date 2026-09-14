@@ -23,6 +23,7 @@ using Newtonsoft.Json.Linq;
 
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
+using org.GraphDefined.Vanaheimr.XMPPWebApp.Chats;
 
 #endregion
 
@@ -64,6 +65,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         private readonly SemaphoreSlim  applying           = new(1, 1);
         private          XMPPClient?    connectingClient;
 
+        // Switching OMEMO on is reached from every transition into Connected,
+        // and a reconnect can produce several of those in a row. The gate makes
+        // sure the key material is read and the device list published once.
+        private readonly SemaphoreSlim  switchingOnOmemo   = new(1, 1);
+
         #endregion
 
         #region Properties
@@ -98,6 +104,20 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// When the current connection was established.
         /// </summary>
         public DateTimeOffset?   ConnectedAt            { get; private set; }
+
+        /// <summary>
+        /// XEP-0384: where the OMEMO keys and sessions are kept, or null to do
+        /// no OMEMO at all.
+        /// </summary>
+        /// <remarks>
+        /// The same shape as <see cref="Archive"/>: a place to keep things, or
+        /// nothing and the feature is not there. It is a place and not a
+        /// Boolean because OMEMO without one would be worse than none - a
+        /// device whose keys do not survive the process has a new fingerprint
+        /// at every start, and every comparison anybody ever makes with it is
+        /// worthless.
+        /// </remarks>
+        public String?           OmemoDirectory         { get; }
 
         #endregion
 
@@ -412,6 +432,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             var client = Settings.CreateClient(loggerFactory);
 
             client.OnMessage             += (timestamp, sender, message,      ct) => { if (Mine(sender)) HandleMessage    (message);      return Task.CompletedTask; };
+            client.OnEncryptedMessage    += (timestamp, sender, message, omemo, ct) => { if (Mine(sender)) HandleEncrypted(message, omemo); return Task.CompletedTask; };
             client.OnCarbonMessage       += (timestamp, sender, carbon,       ct) => { if (Mine(sender)) HandleCarbon     (carbon);       return Task.CompletedTask; };
             client.OnChatState           += (timestamp, sender, from, state,  ct) => { if (Mine(sender)) HandleChatState  (from, state);  return Task.CompletedTask; };
             client.OnChatMarker          += (timestamp, sender, marker,       ct) => { if (Mine(sender)) HandleChatMarker (marker);       return Task.CompletedTask; };
@@ -469,6 +490,239 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             );
 
         }
+
+        #endregion
+
+        #region (private) HandleEncrypted (Message, Omemo)
+
+        /// <summary>
+        /// A message that arrived OMEMO-encrypted and has been decrypted
+        /// (XEP-0384).
+        /// </summary>
+        /// <remarks>
+        /// <b>The one thing that has to be decided here is which way it went.</b>
+        /// An encrypted message reaches this from two places: addressed to this
+        /// device, and wrapped in a carbon of another device of our own. In the
+        /// second case it may be one the other device <i>sent</i> - OMEMO
+        /// encrypts to one's own further devices, which is the whole reason the
+        /// carbon can be read at all - and then the sender is this very account.
+        /// Filing that as incoming would open a conversation with oneself and
+        /// put one's own sentence into it, attributed to a stranger.
+        ///
+        /// So the sender decides: our own address means it went out, and the
+        /// conversation is the one it was addressed to. That sender is not the
+        /// one from the stanza but the one out of the encrypted envelope, which
+        /// the library compared against it (XEP-0420) - the outer one anybody
+        /// can write.
+        ///
+        /// <b>What arrives here is poorer than what the ordinary path gets.</b>
+        /// The decrypting side of Ratatoskr builds its message without the
+        /// delivered-late stamp of XEP-0203 and without the correction id of
+        /// XEP-0308, so an encrypted message that was held shows the time it
+        /// arrived, and an encrypted correction becomes a second line instead of
+        /// replacing the first. That is a gap in the library and not something
+        /// to paper over here; it is written down rather than worked around
+        /// silently.
+        ///
+        /// <b>And one thing never arrives at all:</b>
+        /// <see cref="OmemoIdentityCheck.Changed"/>. The library detects the
+        /// second key under a device where it has to - inside the key exchange -
+        /// and refuses to build the session, so the message is dropped and
+        /// nothing is raised. Which means the one alarm blind trust exists for
+        /// is, in this application, currently a line in a log nobody is reading:
+        /// a device that reports with another key simply falls silent here.
+        /// Fixing that is a small event on OmemoManager and belongs there, not
+        /// in a workaround on this side. Until then, what reaches this method is
+        /// <see cref="OmemoIdentityCheck.New"/> or
+        /// <see cref="OmemoIdentityCheck.Known"/> and nothing else.
+        /// </remarks>
+        private void HandleEncrypted(XMPPMessage     Message,
+                                     OmemoDecrypted  Omemo)
+        {
+
+            if (String.IsNullOrEmpty(Message.Body))
+                return;
+
+            var now                = DateTimeOffset.UtcNow;
+            var (chat, outgoing)   = EncryptedBelongsTo(Message, Settings?.BareJID);
+
+            if (outgoing)
+            {
+
+                Chats.AddOutgoing(
+                    chat,
+                    Message.MessageId ?? Guid.NewGuid().ToString("N"),
+                    Message.Body,
+                    now,
+                    Carbon:    true,
+                    Identity:  Omemo.IdentityCheck
+                );
+
+                return;
+
+            }
+
+            Chats.AddIncoming(
+                chat,
+                Message.From.ToString(),
+                Message.MessageId,
+                Message.Body,
+                now,
+                Identity:  Omemo.IdentityCheck
+            );
+
+        }
+
+        /// <summary>
+        /// Which conversation a decrypted message belongs in, and whether it
+        /// went out rather than came in.
+        /// </summary>
+        /// <remarks>
+        /// Apart because it is the one decision in the encrypted path that can
+        /// be got wrong quietly - and the wrong answer is not a missing message
+        /// but a conversation with oneself, holding one's own sentences under a
+        /// stranger's name.
+        /// </remarks>
+        /// <param name="Message">The decrypted message, whose sender the library compared against the envelope.</param>
+        /// <param name="OwnBareJID">This account, or null when none is configured - then nothing can be ours.</param>
+        internal static (JID Chat, Boolean Outgoing) EncryptedBelongsTo(XMPPMessage  Message,
+                                                                       JID?         OwnBareJID)
+
+            => OwnBareJID is not null && Message.From.Bare == OwnBareJID
+
+                   // Our own address on the inside of a carbon: another device
+                   // of ours wrote this, and the conversation is the one it
+                   // wrote to.
+                   ? (Message.To.Bare,   true)
+
+                   : (Message.From.Bare, false);
+
+        #endregion
+
+        #region (private) SwitchOmemoOnAsync(Client)
+
+        /// <summary>
+        /// XEP-0384: reads this account's key material off the disk, publishes
+        /// the device and its bundle, and from then on encrypted messages can
+        /// be read.
+        /// </summary>
+        /// <remarks>
+        /// <b>Reached from every transition into Connected and not from
+        /// ConnectAsync</b>, because a connection that only came about at the
+        /// third attempt was never in ConnectAsync's successful path. The gate
+        /// and <see cref="XMPPClient.OmemoEnabled"/> make the repetition
+        /// harmless: what would otherwise be repeated is the publishing of a
+        /// device list, and that is the one operation in OMEMO which hurts
+        /// other people's clients when it goes wrong.
+        ///
+        /// <b>Nothing here can fail the connection.</b> A web app that refused
+        /// to sign in because a key file is unreadable would have turned an
+        /// encryption that was a bonus into a dependency. It says so instead -
+        /// in the log and in the corner of the page - and goes on in the clear.
+        ///
+        /// <b>What this does is visible from outside.</b> A new device appears
+        /// in the account's OMEMO device list, and the clients of every contact
+        /// start encrypting to it. Which is why it is possible not to: without
+        /// a directory to keep the keys in, this returns at once and the
+        /// account never learns of this device. See --no-omemo.
+        /// </remarks>
+        private async Task SwitchOmemoOnAsync(XMPPClient Client)
+        {
+
+            if (OmemoDirectory is null || Client.OmemoEnabled)
+                return;
+
+            await switchingOnOmemo.WaitAsync();
+
+            try
+            {
+
+                // Both again, inside the gate: the check above keeps the
+                // ordinary case out of the semaphore, this one is the one that
+                // holds. And a client replaced while we waited is a client
+                // whose keys are no longer this account's.
+                if (Client.OmemoEnabled || !ReferenceEquals(Client, this.Client))
+                    return;
+
+                // The directory before the file: OmemoFileStore creates what is
+                // missing, but with whatever the umask gives. What lies in
+                // there is the identity key and every chain key of every
+                // session - on Unix that wants 0700 around it, and this is the
+                // call that sets it.
+                OwnerOnlyFile.CreateDirectory(OmemoDirectory);
+
+                var store = new OmemoFileStore(OmemoStorePath(Client.BareJid));
+
+                if (!await Client.EnableOmemoAsync(store))
+                {
+
+                    logger.LogWarning("OMEMO: the device list or the bundle was not accepted by the server; " +
+                                      "encrypted messages cannot be read");
+
+                    PublishNotice("warning",
+                                  "This device could not be announced for encrypted messages: the server did not " +
+                                  "accept the OMEMO device list. Whatever is sent encrypted will not be readable here.");
+
+                    return;
+
+                }
+
+                // Blind trust before verification, said out loud although it is
+                // the default of the library as well. It decides what happens
+                // with a device nobody has compared a fingerprint with, and a
+                // security decision that is only a default is one nobody made.
+                //
+                // For receiving it changes nothing - a message that decrypts is
+                // shown whatever one thinks of the device it came from, and the
+                // rating travels with the line. It is the switch that will
+                // decide the sending, and it is set where the decision belongs.
+                Client.Omemo!.TrustNewDevicesBlindly = true;
+
+                logger.LogInformation("OMEMO: device {Device} announced, fingerprint {Fingerprint}",
+                                      Client.Omemo.Identity.DeviceId,
+                                      Client.Omemo.Fingerprint);
+
+                // So that the page learns the fingerprint without a reload.
+                PublishConnection(Client.State, Client.State);
+
+            }
+            catch (Exception e)
+            {
+
+                logger.LogError("OMEMO could not be switched on: {Error}", e.Message);
+
+                PublishNotice("warning",
+                              $"Encrypted messages cannot be read: {e.Message}");
+
+            }
+            finally
+            {
+                switchingOnOmemo.Release();
+            }
+
+        }
+
+        #endregion
+
+        #region (private) OmemoStorePath  (BareJID)
+
+        /// <summary>
+        /// Where one account's OMEMO keys and sessions live.
+        /// </summary>
+        /// <remarks>
+        /// One file per account, named after it, because the account page can
+        /// change the account while the program runs - and a device identity is
+        /// the identity <i>of an account</i>. One file for both would hand the
+        /// second account the first one's sessions, which decrypt nothing and
+        /// would then be published as its own.
+        ///
+        /// Through SafeName like every other JID that becomes a path: the
+        /// account comes out of a file somebody typed into.
+        /// </remarks>
+        private String OmemoStorePath(JID BareJID)
+
+            => Path.Combine(OmemoDirectory ?? PrivatePaths.Directory(),
+                            ChatArchivePaths.SafeName(BareJID.Bare.ToString()) + ".json");
 
         #endregion
 
@@ -598,6 +852,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 foreach (var pending in Client.PendingSubscriptions)
                     Chats.SetPendingRequest(pending.Bare, true);
 
+                // Not awaited, and it must not be: this runs inside the
+                // connection's own state change, and switching OMEMO on is two
+                // round trips to the server. Whatever goes wrong in there is
+                // handled in there - the connection is up either way.
+                _ = SwitchOmemoOnAsync(Client);
+
             }
 
             else if (New == ConnectionState.Disconnected)
@@ -672,6 +932,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                        new JProperty("websocket",         WebSocketURI(client)),
                        new JProperty("carbons",           client.CarbonsEnabled),
                        new JProperty("streamManagement",  client.StreamManagement?.IsEnabled == true),
+                       new JProperty("omemo",             OmemoJSON(client)),
                        new JProperty("connectedAt",       ConnectedAt?.ToString("o")),
                        new JProperty("error",             LastConnectionError)
                    );
@@ -689,6 +950,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return null;
             }
         }
+
+        /// <summary>
+        /// XEP-0384: what this side can and cannot do with encryption.
+        /// </summary>
+        /// <remarks>
+        /// <b>"sending: false" is in here on purpose.</b> This application reads
+        /// encrypted messages and writes in the clear, and that asymmetry is
+        /// the one thing a user must not have to infer. The page says it where
+        /// it says everything else about the connection, and the line beside
+        /// each message says which of the two that message was.
+        /// </remarks>
+        private JObject OmemoJSON(XMPPClient Client)
+
+            => new (
+                   new JProperty("configured",   OmemoDirectory is not null),
+                   new JProperty("receiving",    Client.OmemoEnabled),
+                   new JProperty("sending",      false),
+                   new JProperty("deviceId",     Client.Omemo?.Identity.DeviceId),
+                   new JProperty("fingerprint",  Client.Omemo?.Fingerprint)
+               );
 
         #endregion
 

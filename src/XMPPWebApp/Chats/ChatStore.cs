@@ -276,15 +276,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// <param name="Delayed">Whether it was handed in late (XEP-0203).</param>
         /// <param name="Carbon">Whether another device of our own received it (XEP-0280).</param>
         /// <param name="Corrects">XEP-0308: the id of the message this one replaces.</param>
+        /// <param name="Identity">XEP-0384: how the sending device's key stood, for a line that arrived encrypted; null for one that did not.</param>
         /// <returns>The line as it now stands - the corrected one when there was something to correct.</returns>
-        public ChatMessage AddIncoming(JID             Chat,
-                                       String          From,
-                                       String?         MessageId,
-                                       String          Body,
-                                       DateTimeOffset  Timestamp,
-                                       Boolean         Delayed    = false,
-                                       Boolean         Carbon     = false,
-                                       String?         Corrects   = null)
+        public ChatMessage AddIncoming(JID                  Chat,
+                                       String               From,
+                                       String?              MessageId,
+                                       String               Body,
+                                       DateTimeOffset       Timestamp,
+                                       Boolean              Delayed    = false,
+                                       Boolean              Carbon     = false,
+                                       String?              Corrects   = null,
+                                       OmemoIdentityCheck?  Identity   = null)
         {
             lock (@lock)
             {
@@ -302,9 +304,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                     if (index >= 0)
                     {
 
+                        // The identity travels with the text and not with the
+                        // line: what is displayed now arrived now. A plaintext
+                        // correction of an encrypted message that kept the lock
+                        // would draw it over words that came in the clear.
                         var corrected = conversation.Messages[index] with {
                                             Body       = Body,
-                                            Corrected  = true
+                                            Corrected  = true,
+                                            Identity   = Identity
                                         };
 
                         conversation.Messages[index]  = corrected;
@@ -335,7 +342,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                   Delayed,
                                   Carbon,
                                   Corrects
-                              );
+                              ) {
+                                  Identity = Identity
+                              };
 
                 Insert(conversation, message);
 
@@ -351,17 +360,23 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
-        #region AddOutgoing(Chat, MessageId, Body, Timestamp, Carbon = false)
+        #region AddOutgoing(Chat, MessageId, Body, Timestamp, Carbon = false, Identity = null)
 
         /// <summary>
         /// A message that went out - from here, or from another device of our
         /// own whose carbon we received.
         /// </summary>
-        public ChatMessage AddOutgoing(JID             Chat,
-                                       String          MessageId,
-                                       String          Body,
-                                       DateTimeOffset  Timestamp,
-                                       Boolean         Carbon   = false)
+        /// <remarks>
+        /// <paramref name="Identity"/> is not this application encrypting: it
+        /// sends in the clear. It is the carbon of another device of our own
+        /// that did, and the line says so rather than looking like one of ours.
+        /// </remarks>
+        public ChatMessage AddOutgoing(JID                  Chat,
+                                       String               MessageId,
+                                       String               Body,
+                                       DateTimeOffset       Timestamp,
+                                       Boolean              Carbon     = false,
+                                       OmemoIdentityCheck?  Identity   = null)
         {
             lock (@lock)
             {
@@ -379,7 +394,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                   Body,
                                   Timestamp,
                                   Carbon:  Carbon
-                              );
+                              ) {
+                                  Identity = Identity
+                              };
 
                 Insert(conversation, message);
 

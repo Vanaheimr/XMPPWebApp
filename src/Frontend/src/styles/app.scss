@@ -219,6 +219,29 @@ input, textarea, select {
             font-size:  0.85rem;
         }
 
+        .conn-omemo {
+            font-size:  0.85rem;
+            color:      $color-muted;
+        }
+
+        // A fingerprint exists to be read out loud to somebody, so it is set in
+        // a monospace face and broken into groups - not because it looks
+        // technical, but because sixty-four characters in one run cannot be
+        // compared by a human being at all.
+        .conn-fingerprint {
+
+            font-size:  0.8rem;
+            color:      $color-muted;
+
+            code {
+                font-family:    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                font-size:      0.78rem;
+                word-break:     break-all;
+                user-select:    all;
+            }
+
+        }
+
     }
 
     .danger-zone {
@@ -659,6 +682,19 @@ input, textarea, select {
         font-size:   0.7rem;
         color:       $color-muted;
         text-align:  right;
+    }
+
+    // Not in the grey meta line: a key that is not the one this device used
+    // before is the only thing blind trust leaves anybody to look at, and it
+    // has to be readable at a glance or it may as well not be there.
+    .key-changed {
+        margin-top:     0.3rem;
+        padding:        0.3rem 0.5rem;
+        border-radius:  4px;
+        background:     $color-error-bg;
+        color:          $color-error;
+        font-size:      0.75rem;
+        cursor:         help;
     }
 
 }

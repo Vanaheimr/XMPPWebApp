@@ -37,8 +37,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// chats/
     ///   me@example.org/                             one directory per account
     ///     alice@example.org/                        one per conversation
-    ///       alice@example.org_202609.jsonl          one per month
-    ///       alice@example.org_202610.jsonl
+    ///       alice@example.org_2026-09.jsonl         one per month
+    ///       alice@example.org_2026-10.jsonl
     ///       media/
     ///         20260913T071848Z_photo.jpg            what arrived, when it arrived
     /// </code>

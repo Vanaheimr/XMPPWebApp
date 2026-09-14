@@ -74,6 +74,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             String?  originArgument     = null;
             String?  archiveDirectory   = null;
             var      keepArchive        = true;
+            var      useOmemo           = true;
             var      keepMedia          = true;
             var      historyDays        = ChatArchive.DefaultHistoryWindow.TotalDays;
 
@@ -172,6 +173,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                     case "--no-media":
                         keepMedia = false;
+                        break;
+
+                    case "--no-omemo":
+                        useOmemo = false;
                         break;
 
                     case "--history-days":
@@ -515,6 +520,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                           Version:        version,
                           Archive:        archive,
                           HistoryWindow:  TimeSpan.FromDays(historyDays),
+
+                          // The directory is the switch: a place to keep the
+                          // keys, or no OMEMO. See XMPPWebAPI.OmemoDirectory.
+                          OmemoDirectory:    useOmemo
+                                                 ? Path.Combine(PrivatePaths.Directory(), PrivatePaths.OmemoDirectoryName)
+                                                 : null,
                           DataDirectory:     PrivatePaths.Directory(),
                           SecureCookies:     useTLS,
                           WebAuthnSettings:  webAuthn,
@@ -628,6 +639,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                   $"{(restored > 0 ? $", {restored} message(s) loaded" : "")}");
             else
                 Console.WriteLine("  chat archive   none (--no-archive): nothing said here survives this process");
+
+            Console.WriteLine(api.OmemoDirectory is not null
+                                  ? $"  encryption     OMEMO on, keys in {api.OmemoDirectory}; encrypted messages are read, " +
+                                     "what this app sends goes in the clear"
+                                  : "  encryption     OMEMO off (--no-omemo): messages sent to this device encrypted cannot be read");
 
             if (api.Settings is not null)
                 Console.WriteLine($"  XMPP account   {api.Settings} ({(api.Source == AccountSource.Arguments ? "from the command line, not saved" : "from the account file")})");
@@ -796,7 +812,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         {
             Console.WriteLine("Usage: XMPPWebApp [--port <number>] [--any] [--dev [<dist directory>]]");
             Console.WriteLine("                  [--https | --cert <file.pfx> | --cert-pem <file> [--key-pem <file>]]");
-            Console.WriteLine("                  [--archive <dir> | --no-archive] [--no-media] [--history-days <n>]");
+            Console.WriteLine("                  [--archive <dir> | --no-archive] [--no-media] [--history-days <n>] [--no-omemo]");
             Console.WriteLine("                  [--account <file>] [--jid <jid> --password <pw> [--ws <uri>]] [--insecure]");
             Console.WriteLine("                  [--sasl <mechanism>] [--trust-announcement] [--verbose]");
             Console.WriteLine();
@@ -823,6 +839,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine("  --no-media        write the conversations, but do not fetch the files shared in them");
             Console.WriteLine($"  --history-days <n>  how much of the archive is loaded at a start (default: {ChatArchive.DefaultHistoryWindow.TotalDays:0});");
             Console.WriteLine("                      older messages are loaded when the page is scrolled up to them");
+            Console.WriteLine();
+            Console.WriteLine("Encryption (XEP-0384, OMEMO):");
+            Console.WriteLine("  Messages sent to this device encrypted are read; what this app sends goes in the");
+            Console.WriteLine($"  clear. The keys live in {PrivatePaths.OmemoDirectoryName}/ below");
+            Console.WriteLine($"  {PrivatePaths.Directory()}, one file per account, readable");
+            Console.WriteLine("  by the owner alone - and not encrypted themselves: whoever reads that file reads");
+            Console.WriteLine("  the conversations along.");
+            Console.WriteLine("  --no-omemo        do no OMEMO at all. This device is then not announced in the");
+            Console.WriteLine("                    account's device list, and whatever is sent to it encrypted");
+            Console.WriteLine("                    stays unreadable here. Use it when this account's devices are");
+            Console.WriteLine("                    somebody else's business - announcing one changes what every");
+            Console.WriteLine("                    contact's client does.");
             Console.WriteLine();
             Console.WriteLine("Passkeys:");
             Console.WriteLine("  --origin <url>    the address browsers reach this at, e.g. https://chat.example.org");

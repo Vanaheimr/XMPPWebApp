@@ -83,6 +83,17 @@ export interface Media {
     source:       string | null;
 }
 
+/**
+ * How the sending device's OMEMO identity key stood when a message arrived.
+ *
+ * 'new' is the ordinary case and not a warning: blind trust means the first
+ * message from a device is read without anybody having compared a fingerprint.
+ * 'changed' is the one that matters - the same device, a different key - and no
+ * live message carries it yet, because the library drops such a message rather
+ * than decrypting it.
+ */
+export type Identity = 'new' | 'known' | 'changed';
+
 /** One line of a conversation. The body is plain text: the page escapes it. */
 export interface Message {
     id:         string;
@@ -97,8 +108,31 @@ export interface Message {
     corrected:  boolean;
     delivered:  boolean;
     displayed:  boolean;
+    /** XEP-0384: whether this line travelled encrypted */
+    encrypted:  boolean;
+    /** how the sending device's key stood; null for a line that came in the clear */
+    identity:   Identity | null;
     /** the file this message handed over, once it has been fetched */
     media:      Media | null;
+}
+
+/**
+ * XEP-0384: what this side can do with encryption.
+ *
+ * Reading and writing are separate on purpose, because here they differ: this
+ * app reads encrypted messages and sends in the clear. A single "encryption:
+ * on" would be the most comfortable lie available.
+ */
+export interface Omemo {
+    /** whether OMEMO is configured at all (--no-omemo turns it off) */
+    configured:   boolean;
+    /** whether this device is announced and can read encrypted messages */
+    receiving:    boolean;
+    /** whether this app encrypts what it sends - false, and it says so */
+    sending:      boolean;
+    deviceId:     number | null;
+    /** this device's own fingerprint, for somebody to compare */
+    fingerprint:  string | null;
 }
 
 /** A conversation as the list shows it. */
@@ -125,6 +159,8 @@ export interface Connection {
     websocket:         string | null;
     carbons:           boolean;
     streamManagement:  boolean;
+    /** absent while no account is configured */
+    omemo?:            Omemo;
     connectedAt:       string | null;
     error:             string | null;
 }

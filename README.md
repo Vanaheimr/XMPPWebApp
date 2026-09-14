@@ -26,13 +26,15 @@ that talks to it.
 > Windows and on Debian 13, because two things here answer differently per
 > platform — a certificate chain and the rules a file name has to obey.
 >
-> What is open on purpose, and why this is not *stable*: everything said is
-> kept in the clear. Owner-only (0600, in the per-user data directory) and
-> nobody else's business, but in the clear — that is a decision, not an
-> oversight, and it means the machine this runs on is the trust boundary. There
-> is no OMEMO in the page and no MAM, and one account with one login is the
-> whole model. A web client for the person who runs it; not a service for
-> other people.
+> What is open on purpose, and why this is not *stable*: **OMEMO reads and does
+> not write.** A message sent to this device encrypted is decrypted and shown
+> with a lock on the line; what this app sends goes in the clear. And what is
+> kept is kept in the clear either way — the archive is written after
+> decrypting, owner-only (0600, in the per-user data directory) and nobody
+> else's business, but in the clear. That is a decision, not an oversight, and
+> it means the machine this runs on is the trust boundary. There is no MAM, and
+> one account with one login is the whole model. A web client for the person who
+> runs it; not a service for other people.
 
 ---
 
@@ -101,6 +103,27 @@ that talks to it.
   when the upload has expired, an encrypted one is decrypted on the way in,
   and no outside host learns who is reading. What is fetched, and what it may
   be served back as, is narrow on purpose — see [Security notes](#security-notes).
+- **Encrypted messages, read.** A message that arrives OMEMO-encrypted
+  (XEP-0384) is decrypted and shown with 🔒 on its line — per line,
+  because what this app *sends* goes in the clear, and a lock on the
+  conversation would be wrong for half of what is in it. New devices are
+  trusted blindly, which is the only trust model that gets used: a procedure
+  demanding a fingerprint comparison before the first message does not get
+  followed, and unused encryption protects nobody. This device's own
+  fingerprint is on the settings page, to read out to somebody — which is
+  what makes a later change noticeable at all.
+
+  **One gap, named rather than glossed over.** Blind trust *before verification*
+  is meant to cut both ways: blind at the start, loud when a device that has
+  written before turns up with a different identity key. The second half is not
+  there yet. Ratatoskr detects that case inside the key exchange and refuses to
+  build the session — rightly, because a program cannot tell a new
+  installation from somebody pushing in between — but it drops the message
+  without raising anything, so the page shows nothing and that device simply
+  falls silent here. What it needs is a small event on the library's OMEMO
+  manager; the page already has the place to put it. Until then: a contact whose
+  encrypted messages stop arriving is worth asking about through another
+  channel.
 - **Contacts.** Start a chat with any JID, add somebody as a contact, accept or
   deny a contact request, remove a contact.
 - **Unicode.** Every script and every emoji, in both directions. What a
@@ -111,8 +134,8 @@ that talks to it.
   never polls.
 
 Not implemented, as in the console: MUC/MIX group chat, MAM history (the
-archive here is this web app's own, not the server's), HTTP file upload, OMEMO
-in the page, avatars. The full picture of what the library
+archive here is this web app's own, not the server's), HTTP file upload,
+sending OMEMO (it is only read), avatars. The full picture of what the library
 speaks is in the
 [README of XMPPConsole](https://github.com/Vanaheimr/XMPPConsole#what-it-speaks-today).
 
@@ -191,6 +214,7 @@ dotnet run --project src\XMPPWebApp\XMPPWebApp.csproj -- --jid user@example.org 
 | `--no-archive` | keep nothing: what is said is gone when the process is |
 | `--no-media` | write the conversations, but do not fetch the files shared in them |
 | `--history-days <n>` | how much of the archive is loaded at a start, default 31; older messages are loaded when the page is scrolled up to them |
+| `--no-omemo` | do no OMEMO at all: this device is then not announced in the account's device list, and whatever is sent to it encrypted stays unreadable here |
 | `-j`, `--jid <jid>` | an XMPP account for this run only, not written to the file |
 | `-p`, `--password <pw>` | its password (visible in the process list — the file is not) |
 | `-w`, `--ws <uri>` | the WebSocket endpoint; without one the host-meta of the domain is asked (XEP-0156), then `wss://<domain>:5443/ws` |
@@ -496,8 +520,23 @@ is decisions rather than defects.
   its tag can even be checked, so the way to make that smaller is a smaller
   number and not a stream.
 
+- **Switching OMEMO on changes what other people's clients do.** Announcing a
+  device puts it in the account's XEP-0384 device list, and from then on every
+  contact's client encrypts to it as well. Which is why it can be left alone:
+  `--no-omemo` never announces this device, at the price that anything sent to
+  it encrypted stays unreadable here. The keys live in `omemo/` in the
+  application data directory, one file per account, created 0700/0600 on Unix
+  — and **not encrypted themselves**: that file holds the identity key and
+  every chain key of every session, so whoever reads it reads the conversations
+  along. An encryption with a key lying beside it would be none, and one
+  somebody types in does not exist in a web app that reconnects by itself.
+  Losing the file is not a small thing either: this device keeps its number in
+  the list and its key is gone, so what was sent to it can no longer be read by
+  anybody.
 - **The archive is the most private thing this program writes.** Everything
-  that was ever said, in the clear, plus the files. On Unix its directories are
+  that was ever said, in the clear, plus the files. **A decrypted message is
+  written like any other** — OMEMO protects the wire and the server, not the
+  disk of the machine that was meant to read it. On Unix its directories are
   created 0700 and its files 0600, which they were not at first: the credentials
   were owner-only on a server while the conversations beside them took whatever
   the umask happened to be, and 0644 is a readable conversation. On Windows the
@@ -649,16 +688,13 @@ submodule bump has work in it.
 ```
 XMPPWebApp.slnx
 src/XMPPWebApp/                  the C# process (net10.0)
-    Program.cs                   the web login, arguments, HTTP server, account file
-    XMPPWebAPI.cs                the JSON API and the event stream
+    Program.cs                   arguments, HTTP server, account file, the first account
+    XMPPWebAPI.cs                the JSON API and the event stream, on Hermod's HTTPExtAPI
     XMPPWebAPI.XMPP.cs           the account, the client made from it, which XMPP events end up where
+    PrivatePaths.cs              where this program keeps what is nobody else's business
     Account/AccountSettings.cs   one account: what the page asks for and the file keeps
     Account/AccountFile.cs       reading and writing the account file
-    Account/WebLoginSettings.cs  the web login: one username, one hashed password
-    Account/WebLoginFile.cs      reading and writing the web login file
     Account/OwnerOnlyFile.cs     writing a file only its owner may read
-    XMPPWebAPI.WebLogin.cs       the routes that change the web login
-    WebSessions.cs               the web login and the session cookie
     Chats/ChatStore.cs           the conversations in memory
     Chats/ChatMessage.cs         one line, one conversation, as JSON
     Chats/ChatArchive.cs         the conversations on disk: writing, and reading back
@@ -673,11 +709,13 @@ src/XMPPWebApp/                  the C# process (net10.0)
 src/XMPPWebApp.Tests/            NUnit
 src/Frontend/                    npm project (webpack, TypeScript, SCSS)
     src/pages/chat.ts            the chat page
-    src/pages/account.ts         the settings page: the XMPP account and the web login
+    src/pages/account.ts         the settings page: the XMPP account, the login, the passkeys
     src/pages/login.ts           the sign-in page
     src/chat/store.ts            the browser's copy of the chats, fed by the stream
     src/chat/links.ts            which body is a picture, which is a link, and the archived file
     src/api/client.ts            the JSON API
+    src/passkeys.ts              the WebAuthn ceremonies: register, sign in, confirm
+    src/webauthn.ts              base64url, and nothing else - which is why it can be tested
     tests/                       node --test
     dist/                        webpack output (generated, git-ignored)
 libs/Ratatoskr, libs/Hermod, libs/Styx
