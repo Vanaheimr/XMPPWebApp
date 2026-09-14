@@ -308,6 +308,41 @@ is refused when the browser says it came from another site.
 
 ## Security notes
 
+A source security review was run against revision `d80569ce`. It reported twelve
+findings, which are five: several were listed two or three times, and the same
+one appeared once as *high* and twice as *medium*, so the summary's "high: 3"
+meant two distinct ones. All five are closed, and each is described in its own
+point below:
+
+| What it found | Where it is answered |
+|---|---|
+| A stolen session could send the stored XMPP password to a server of its choosing | *The stored password only ever goes back where it came from* |
+| The half-second pause after a wrong password limited nothing | *Signing in is rationed* |
+| An open event stream kept delivering after its session had ended | *An open event stream is asked again for every event* |
+| A peer could grow the dedup table, the fetch queue and the disk without limit | *What a peer can make grow has a number next to it* |
+| The credential files and the archive were as private as wherever they happened to sit | *What is private is kept where the system keeps private things* |
+
+Two things are worth saying about that list. The last one was reported as *high*
+and is not: on Linux, where this runs, the credentials were already owner-only,
+and the finding rested on the Windows development machine — but it was right
+that the archive beside them took whatever the umask gave, which is the half
+that reached production. And the review recommended twice that the account
+routes ask for a fresh confirmation; that is the *session opens the chats* point
+below, and it waited until there was a passkey to ask with.
+
+The review was a static source review with partial coverage: no runtime
+penetration test, no dependency advisory lookup, and the vendored libraries were
+read only along the paths this application reaches. Putting an application on
+Hermod's `HTTPExtAPI` afterwards turned up five things there that no review of
+*this* repository could have seen — among them an `Authorization: Basic` header
+that walked past the sign-in limiters on every route, and users created in code
+as authenticated coming out disabled. They are fixed in Hermod and pinned here.
+
+The report itself is not in this repository and is git-ignored on purpose: a
+list of weaknesses belongs beside the code, not published with it. What remains
+open is not in it either — it is the paragraph at the top of this file, and it
+is decisions rather than defects.
+
 - **The account file holds a working password.** `xmpp-account.json`, written
   by the account page, keeps the XMPP password in plain text — the same as the
   old constant, only in a file that is git-ignored rather than in the source.
