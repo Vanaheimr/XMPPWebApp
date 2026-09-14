@@ -152,9 +152,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// web server answers.
         /// </summary>
         /// <param name="HTTPServer">The HTTP server.</param>
-        /// <param name="Sessions">The web sessions.</param>
         /// <param name="AccountFile">The file the account settings live in.</param>
-        /// <param name="WebLoginFile">The file the web login lives in.</param>
         /// <param name="Settings">The account to start with, or null when none is configured yet.</param>
         /// <param name="Source">Where those settings came from.</param>
         /// <param name="RootPath">The root path of the API, "/api" by default.</param>
@@ -163,6 +161,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <param name="Archive">Where the conversations are kept, or null to keep none.</param>
         /// <param name="HistoryWindow">How much of the archive is loaded at a start.</param>
         /// <param name="OmemoDirectory">XEP-0384: where the OMEMO keys live, or null to do no OMEMO.</param>
+        /// <param name="DataDirectory">Where the account database and the logs go.</param>
+        /// <param name="SecureCookies">Whether the session cookie is marked Secure - true behind TLS.</param>
+        /// <param name="WebAuthnSettings">Passkeys, or null not to register those routes at all.</param>
         /// <param name="LoggerFactory">An optional logger factory, handed on to every XMPP client.</param>
         public XMPPWebAPI(HTTPServer        HTTPServer,
                           AccountFile       AccountFile,
