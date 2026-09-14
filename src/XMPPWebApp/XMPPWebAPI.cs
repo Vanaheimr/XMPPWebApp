@@ -448,7 +448,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// PUT /api/v1/account with {"jid", "password", "websocket",
         /// "minimumSasl", "allowInsecure", "trustAnnouncement"}: writes the
         /// account file, drops the old connection and connects anew. An empty
-        /// password keeps the one already stored.
+        /// password keeps the one already stored - but only for the same
+        /// account on the same endpoint, see
+        /// <see cref="AccountSettings.RefuseStoredPassword"/>.
         /// </summary>
         private async Task<HTTPResponse> PutAccount(HTTPRequest Request)
         {
@@ -462,9 +464,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return errorResponse;
 
-            var password = json.Value<String>("password");
+            var password    = json.Value<String>("password");
+            var fromTheFile = String.IsNullOrEmpty(password);
 
-            if (String.IsNullOrEmpty(password))
+            if (fromTheFile)
                 password = Settings?.Password;
 
             if (!AccountSettings.TryCreate(json.Value<String>("jid"),
@@ -477,6 +480,20 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                            out var error))
             {
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+            }
+
+            // A password the browser is never shown must not be one the browser
+            // can send elsewhere either. Reusing the stored one is a convenience
+            // for the same account on the same endpoint and nothing beyond that:
+            // saving a new endpoint - or a new domain, which an endpointless
+            // account is asked for by name - means typing the password again.
+            // Checked after TryCreate so that what is compared is the endpoint
+            // as it was understood, not the text that arrived.
+            if (fromTheFile &&
+                AccountSettings.RefuseStoredPassword(Settings, settings) is String refusal)
+            {
+                logger.LogWarning("An account change to {Account} was refused: the stored password would have gone somewhere else.", settings);
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, refusal);
             }
 
             try

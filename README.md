@@ -285,6 +285,21 @@ is refused when the browser says it came from another site.
   `HttpOnly; SameSite=strict` cookie, `secure` when the server speaks TLS.
   Sessions end after 12 hours without use, after 7 days at the latest. A
   failed sign-in waits half a second before it answers.
+- **The stored password only ever goes back where it came from.** The account
+  page is never given the password — it learns that one is set, no more — and
+  an empty password field on a save keeps the one on file. That convenience
+  ends where the destination changes: a save that names another JID or another
+  WebSocket endpoint has to carry the password again. Without that rule the
+  first half is theatre, because connecting *is* sending: SCRAM proves
+  knowledge of the password to whoever answers, and under SASL PLAIN it travels
+  verbatim. Whoever held a session could otherwise read a password they were
+  never shown — name their own server, save, wait for the login. Both halves of
+  "the destination" are checked, and the second is the one that is easy to
+  miss: no endpoint means the domain of the JID is asked for one (XEP-0156), so
+  moving the JID alone moves the login just as surely. The resource is not part
+  of it. Lowering the SASL floor on its own is still allowed: it weakens how the
+  password is proved, but only towards the server it was stored for.
+
 - **Nothing that came over the wire is ever put into the page as HTML.**
   Names, status texts and message bodies become text nodes; a body becomes a
   picture or a link only through the two rules in `src/Frontend/src/chat/links.ts`,

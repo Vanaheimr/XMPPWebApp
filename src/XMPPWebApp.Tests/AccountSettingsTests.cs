@@ -39,6 +39,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
     /// comes from the command line or from the page. And the password: it is
     /// written to the file and never sent to the browser, so the JSON for the
     /// page must not carry it and the JSON for the file must.
+    ///
+    /// The third is the other half of that second one. Keeping the password out
+    /// of the browser only means something while the browser cannot send it
+    /// somewhere new, so the rule about reusing the stored password is tested
+    /// here as well - including the case that looks harmless, where the endpoint
+    /// stays null and only the domain of the JID moves.
     /// </remarks>
     [TestFixture]
     public class AccountSettingsTests
@@ -207,6 +213,153 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             AccountSettings.TryCreate("alice@example.org", "hunter2", "wss://x.example/ws", null, false, false, out var settings, out _);
             Assert.That(settings!.ToString(), Does.Not.Contain("hunter2"));
         }
+
+        #endregion
+
+
+        #region (private) Account(JID, Endpoint = null, MinimumSasl = null)
+
+        /// <summary>
+        /// Settings that are known to be valid, so that a test reads as the one
+        /// thing it is about.
+        /// </summary>
+        private static AccountSettings Account(String   JID,
+                                               String?  Endpoint      = null,
+                                               String?  MinimumSasl   = null)
+        {
+
+            Assert.That(AccountSettings.TryCreate(JID, "secret", Endpoint, MinimumSasl, false, false,
+                                                  out var settings, out var error),
+                        Is.True, error);
+
+            return settings!;
+
+        }
+
+        #endregion
+
+        #region TheSameAccountOnTheSameEndpoint_KeepsTheStoredPassword()
+
+        [Test]
+        public void TheSameAccountOnTheSameEndpoint_KeepsTheStoredPassword()
+
+            => Assert.That(AccountSettings.RefuseStoredPassword(
+                               Account("alice@example.org", "wss://xmpp.example.org/ws"),
+                               Account("alice@example.org", "wss://xmpp.example.org/ws")
+                           ),
+                           Is.Null,
+                           "nothing about where the password would go has changed");
+
+        #endregion
+
+        #region AnotherEndpoint_NeedsThePasswordTyped()
+
+        /// <summary>
+        /// The attack this rule exists for: a session that was never shown the
+        /// password names another server and waits for the login to hand it
+        /// over.
+        /// </summary>
+        [Test]
+        public void AnotherEndpoint_NeedsThePasswordTyped()
+        {
+
+            var refusal = AccountSettings.RefuseStoredPassword(
+                              Account("alice@example.org", "wss://xmpp.example.org/ws"),
+                              Account("alice@example.org", "wss://collector.example/ws")
+                          );
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(refusal,  Is.Not.Null);
+                Assert.That(refusal,  Does.Contain("collector.example"), "the sentence says where it would have gone");
+            });
+
+        }
+
+        #endregion
+
+        #region AnotherDomain_NeedsThePasswordTyped()
+
+        /// <summary>
+        /// The same attack without naming an endpoint at all. Both sides have
+        /// none, so comparing endpoints alone would call this unchanged - but a
+        /// null endpoint means the domain of the JID is asked for one
+        /// (XEP-0156), and that domain is now the attacker's.
+        /// </summary>
+        [Test]
+        public void AnotherDomain_NeedsThePasswordTyped()
+        {
+
+            var refusal = AccountSettings.RefuseStoredPassword(
+                              Account("alice@example.org"),
+                              Account("alice@collector.example")
+                          );
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(refusal,  Is.Not.Null);
+                Assert.That(refusal,  Does.Contain("collector.example"));
+            });
+
+        }
+
+        #endregion
+
+        #region AnEndpointWhereThereWasNone_NeedsThePasswordTyped()
+
+        [Test]
+        public void AnEndpointWhereThereWasNone_NeedsThePasswordTyped()
+
+            => Assert.That(AccountSettings.RefuseStoredPassword(
+                               Account("alice@example.org"),
+                               Account("alice@example.org", "wss://collector.example/ws")
+                           ),
+                           Is.Not.Null,
+                           "an account that asked its own domain now asks somebody else");
+
+        #endregion
+
+        #region AnotherResource_KeepsTheStoredPassword()
+
+        [Test]
+        public void AnotherResource_KeepsTheStoredPassword()
+
+            => Assert.That(AccountSettings.RefuseStoredPassword(
+                               Account("alice@example.org/desktop", "wss://xmpp.example.org/ws"),
+                               Account("alice@example.org/laptop",  "wss://xmpp.example.org/ws")
+                           ),
+                           Is.Null,
+                           "the same account on the same server, under another name for this device");
+
+        #endregion
+
+        #region ALowerSaslFloorAlone_KeepsTheStoredPassword()
+
+        /// <summary>
+        /// Deliberate, and worth pinning down: dropping to PLAIN weakens how the
+        /// password is proved, but it still only reaches the server it was
+        /// stored for. The account page is allowed to offer that; what it may
+        /// not do is move the destination.
+        /// </summary>
+        [Test]
+        public void ALowerSaslFloorAlone_KeepsTheStoredPassword()
+
+            => Assert.That(AccountSettings.RefuseStoredPassword(
+                               Account("alice@example.org", "wss://xmpp.example.org/ws"),
+                               Account("alice@example.org", "wss://xmpp.example.org/ws", "PLAIN")
+                           ),
+                           Is.Null);
+
+        #endregion
+
+        #region NothingOnFile_NeedsThePasswordTyped()
+
+        [Test]
+        public void NothingOnFile_NeedsThePasswordTyped()
+
+            => Assert.That(AccountSettings.RefuseStoredPassword(null, Account("alice@example.org")),
+                           Is.Not.Null,
+                           "there is nothing to reuse");
 
         #endregion
 

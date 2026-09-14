@@ -172,6 +172,69 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Account
 
         #endregion
 
+        #region RefuseStoredPassword (Stored, Requested)
+
+        /// <summary>
+        /// Whether the password already on file may be used for these settings,
+        /// or the one sentence that says why it may not.
+        /// </summary>
+        /// <remarks>
+        /// The account page is never given the password: <see cref="ToJSON"/>
+        /// leaves it out and the browser learns only that one is set. That is
+        /// worth nothing if the browser may point the same password somewhere
+        /// else, because connecting IS sending it - SCRAM proves knowledge of
+        /// it to whoever answers, and under SASL PLAIN it travels verbatim.
+        /// Without this rule, whoever holds a session can read a password they
+        /// were never shown: name their own server, save, wait for the login.
+        ///
+        /// So the question is not who is asking but where the password would
+        /// go. The one on file may only go back to the place it was stored
+        /// for; change that place and it has to be typed again - which whoever
+        /// owns the account can do and whoever stole the session cannot.
+        ///
+        /// "The place" has two halves, and the second is the one that is easy
+        /// to miss: a null endpoint means the domain of the JID is asked for
+        /// one (XEP-0156), so changing the JID alone moves the destination
+        /// just as surely as naming another endpoint. The resource is not part
+        /// of it - "/desktop" and "/laptop" are the same account on the same
+        /// server, which is why the bare JIDs are compared.
+        ///
+        /// What is deliberately not refused here is lowering the SASL floor
+        /// while the rest stays: that weakens how the password is proved, but
+        /// it still only ever reaches the server it was stored for. A weaker
+        /// floor is a decision the account page is allowed to offer.
+        /// </remarks>
+        public static String? RefuseStoredPassword(AccountSettings?  Stored,
+                                                   AccountSettings   Requested)
+        {
+
+            if (Stored is null)
+                return "There is no password on file yet. Please type the password of this account.";
+
+            if (Stored.BareJID != Requested.BareJID)
+                return $"The password on file belongs to {Stored.BareJID}. Please type the password of {Requested.BareJID}.";
+
+            // Ordinal, and not a lenient comparison: everything but a byte-wise
+            // identical endpoint asks for the password once more. Too strict
+            // costs one line typed, too lax sends the password to whatever the
+            // difference turned out to be.
+            if (!String.Equals(Stored.WebSocketURI, Requested.WebSocketURI, StringComparison.Ordinal))
+                return $"The password on file was stored for {Describe(Stored)}. Please type it again to send it to {Describe(Requested)}.";
+
+            return null;
+
+        }
+
+        /// <summary>
+        /// Where a login would go, for a sentence a person has to act on.
+        /// </summary>
+        private static String Describe(AccountSettings Settings)
+
+            => Settings.WebSocketURI
+                   ?? $"whatever endpoint {Settings.BareJID.Domainpart} announces";
+
+        #endregion
+
         #region TryParse(JSON, out Settings, out Error)
 
         /// <summary>

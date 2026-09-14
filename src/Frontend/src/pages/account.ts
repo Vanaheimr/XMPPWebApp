@@ -94,7 +94,9 @@ function renderXMPP(area:      HTMLElement,
                 <label>Password
                     <input name="password" type="password" autocomplete="current-password"
                            placeholder="${account?.passwordSet ? 'Leave blank to keep the stored password' : 'Required'}" />
-                    <span class="hint">Kept in the clear on the server: SCRAM needs it to compute the proof.</span>
+                    <span class="hint">Kept in the clear on the server: SCRAM needs it to compute the proof.
+                        Blank keeps the stored one, except when the JID or the endpoint changes - a password
+                        nobody was shown must not be sendable to a new address without being typed.</span>
                 </label>
 
                 <label>WebSocket endpoint <span class="muted">(optional)</span>
