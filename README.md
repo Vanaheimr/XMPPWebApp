@@ -607,6 +607,14 @@ own copy and that the address it came from appears nowhere on the page. Node run
 answered by a stand-in that has no `innerHTML`, so that reaching for it would
 fail the test.
 
+And the encoding a passkey travels in, which is why it lives in a file of its
+own with nothing else in it: base64url in both directions at every length —
+the four padding cases and then some — and the four fields of a ceremony's
+options that carry bytes, turned into buffers without writing into what the
+caller handed over. A decoder that gets the padding wrong does not throw. It
+returns the wrong bytes, and the ceremony then fails on the signature, which
+points at the wrong half of the system.
+
 And the API as a browser meets it: a real server on a real port, driven over
 HTTP. Everything else here tests a decision, and a decision that is right and
 never asked is worth nothing — so this is where the four gates are held to

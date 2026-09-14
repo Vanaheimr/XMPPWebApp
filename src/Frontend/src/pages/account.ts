@@ -22,13 +22,13 @@ export const accountPage: Page = {
                 <h1><i class="fa-solid fa-gear"></i> Settings</h1>
                 <p id="intro" class="muted">Loading …</p>
                 <div id="xmpp-area"></div>
-                <div id="weblogin-area"></div>
+                <div id="me-area"></div>
             </section>
         `);
 
         const intro     = must<HTMLElement>(root, '#intro');
         const xmppArea  = must<HTMLElement>(root, '#xmpp-area');
-        const loginArea = must<HTMLElement>(root, '#weblogin-area');
+        const loginArea = must<HTMLElement>(root, '#me-area');
 
         let current: AccountResponse;
         let me: Me;
@@ -50,7 +50,7 @@ export const accountPage: Page = {
             void accountPage.render({ root, params: {}, url: new URL(location.href), navigate });
         });
 
-        renderWebLogin(loginArea, me);
+        renderMe(loginArea, me);
 
         // After the login card, and only when this browser could use one. What
         // the server thinks is found out by asking: the routes are not there at
@@ -379,9 +379,9 @@ function renderXMPP(area:      HTMLElement,
 
 
 // ---------------------------------------------------------------------------
-// The web login
+// The account of this page - not the XMPP one, which is further down
 
-function renderWebLogin(area: HTMLElement, me: Me): void {
+function renderMe(area: HTMLElement, me: Me): void {
 
     render(area, html`
         <div class="card">
@@ -394,7 +394,7 @@ function renderWebLogin(area: HTMLElement, me: Me): void {
                 username itself does not change - it is what the account is called.
             </p>
 
-            <form id="weblogin-form" class="form-stack" autocomplete="off">
+            <form id="me-form" class="form-stack" autocomplete="off">
 
                 <label>Username
                     <input name="username" value="${me.user.id}" autocomplete="username" disabled />
@@ -412,8 +412,8 @@ function renderWebLogin(area: HTMLElement, me: Me): void {
 
                 <div class="form-actions">
                     <button type="submit" class="btn primary">Change the password</button>
-                    <span id="weblogin-error" class="form-error" role="alert"></span>
-                    <span id="weblogin-ok" class="form-notice" role="status"></span>
+                    <span id="me-error" class="form-error" role="alert"></span>
+                    <span id="me-ok" class="form-notice" role="status"></span>
                 </div>
 
             </form>
@@ -421,9 +421,9 @@ function renderWebLogin(area: HTMLElement, me: Me): void {
         </div>
     `);
 
-    const form    = must<HTMLFormElement>(area, '#weblogin-form');
-    const error   = must<HTMLElement>(area, '#weblogin-error');
-    const ok      = must<HTMLElement>(area, '#weblogin-ok');
+    const form    = must<HTMLFormElement>(area, '#me-form');
+    const error   = must<HTMLElement>(area, '#me-error');
+    const ok      = must<HTMLElement>(area, '#me-ok');
     const button  = must<HTMLButtonElement>(form, 'button[type="submit"]');
 
     form.addEventListener('submit', event => {

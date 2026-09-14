@@ -10,30 +10,7 @@
 // will accept - plus the browser's own two conditions below.
 
 import { api, type Confirmation, type Me } from './api/client';
-
-// ---------------------------------------------------------------------------
-// base64url
-
-function toBase64Url(bytes: ArrayBuffer): string {
-
-    const binary = String.fromCharCode(...new Uint8Array(bytes));
-
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-}
-
-function fromBase64Url(text: string): ArrayBuffer {
-
-    const padded  = text.replace(/-/g, '+').replace(/_/g, '/');
-    const binary  = atob(padded + '='.repeat((4 - padded.length % 4) % 4));
-    const bytes   = new Uint8Array(binary.length);
-
-    for (let i = 0; i < binary.length; i++)
-        bytes[i] = binary.charCodeAt(i);
-
-    return bytes.buffer;
-
-}
+import { toBase64Url, withBuffers } from './webauthn';
 
 // ---------------------------------------------------------------------------
 // Whether to offer one at all
@@ -54,38 +31,6 @@ export function passkeysPossible(): boolean {
 
 // ---------------------------------------------------------------------------
 // The two ceremonies
-
-/** What the server sends: the options, with every byte string as base64url. */
-interface Ceremony {
-    ceremonyId:  string;
-    publicKey:   Record<string, unknown>;
-}
-
-function withBuffers(publicKey: Record<string, unknown>): PublicKeyCredentialCreationOptions & PublicKeyCredentialRequestOptions {
-
-    const options = { ...publicKey } as Record<string, unknown>;
-
-    if (typeof options.challenge === 'string')
-        options.challenge = fromBase64Url(options.challenge);
-
-    const user = options.user as { id?: unknown } | undefined;
-    if (user && typeof user.id === 'string')
-        user.id = fromBase64Url(user.id);
-
-    for (const list of ['allowCredentials', 'excludeCredentials'])
-    {
-        const credentials = options[list] as { id?: unknown }[] | undefined;
-        if (Array.isArray(credentials))
-            for (const credential of credentials)
-                if (typeof credential.id === 'string')
-                    credential.id = fromBase64Url(credential.id);
-    }
-
-    // Through unknown, because the shape came off the wire and TypeScript is
-    // right that it cannot know it is either of these until the browser says so.
-    return options as unknown as PublicKeyCredentialCreationOptions & PublicKeyCredentialRequestOptions;
-
-}
 
 /**
  * Register a passkey for the account that is signed in. The name is what the
@@ -157,7 +102,6 @@ export async function signIn(login?: string): Promise<Me> {
 
 }
 
-export type { Ceremony };
 
 /**
  * The same ceremony as a sign-in, asked of somebody who is already signed in.

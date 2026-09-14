@@ -95,8 +95,25 @@ export class ChatStore {
 
         source.addEventListener('error', () => {
             if (this.streamConnected) {
+
                 this.streamConnected = false;
                 this.emit({ type: 'stream' });
+
+                // Ask once whether we are still signed in. A stream that drops
+                // is usually the network, and EventSource reconnects on its own
+                // - but it is also what a revoked session looks like from here,
+                // and that one never reconnects: the server closes the stream
+                // and answers the retry with 401, which EventSource reports as
+                // one more 'error' and nothing else. Without this the page sits
+                // showing "disconnected" until somebody clicks something.
+                //
+                // Only on the way from connected to disconnected, so a browser
+                // that is offline does not ask again for every failed retry.
+                // The answer is not read: a 401 goes to the handler that sends
+                // the page back to the sign-in, and anything else means the
+                // session is fine and the stream really was the network.
+                void api.auth.me().catch(() => { /* handled there or not ours */ });
+
             }
         });
 
