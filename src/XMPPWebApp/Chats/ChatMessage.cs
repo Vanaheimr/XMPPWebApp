@@ -106,11 +106,32 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// <param name="Chat">The far end of the conversation, a bare JID.</param>
     /// <param name="Direction">Received or sent.</param>
     /// <param name="From">Who wrote it: the full JID of the sender, or "me".</param>
-    /// <param name="Body">The text, exactly as it travelled - the browser escapes it.</param>
+    /// <param name="Body">
+    /// The text, as the browser gets it to escape.
+    ///
+    /// <b>Without the quoted lines of a reply</b> (XEP-0461/XEP-0428). An
+    /// answer carries the text it answers a second time, as <c>&gt; </c> lines,
+    /// so that a client which cannot follow the reference still shows what it
+    /// is about. This one can follow it, and storing both would put the same
+    /// sentence in the archive twice - once as somebody's line and once inside
+    /// the answer to it.
+    /// </param>
     /// <param name="Timestamp">When it was written, per XEP-0203 when it was handed in late.</param>
     /// <param name="Delayed">Whether it was held somewhere on the way.</param>
     /// <param name="Carbon">Whether it was mirrored from another device of our own (XEP-0280).</param>
     /// <param name="Corrects">XEP-0308: the id of the message this one replaces, when it is a correction that found nothing to replace.</param>
+    /// <param name="RepliesTo">
+    /// XEP-0461: the id of the message this one answers, or null.
+    /// </param>
+    /// <param name="Quote">
+    /// The quoted lines that came with it, taken out of <paramref name="Body"/>
+    /// and kept here.
+    ///
+    /// <b>Kept rather than dropped</b>, because they are sometimes the only
+    /// copy of what is being answered: the message they point at may have been
+    /// written before this archive existed, or on a device whose history never
+    /// reached here.
+    /// </param>
     public sealed record ChatMessage(String            Id,
                                      JID               Chat,
                                      MessageDirection  Direction,
@@ -119,7 +140,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                      DateTimeOffset    Timestamp,
                                      Boolean           Delayed    = false,
                                      Boolean           Carbon     = false,
-                                     String?           Corrects   = null)
+                                     String?           Corrects   = null,
+                                     String?           RepliesTo  = null,
+                                     String?           Quote      = null)
     {
 
         /// <summary>

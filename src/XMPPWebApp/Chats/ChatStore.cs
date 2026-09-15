@@ -313,7 +313,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                        Boolean              Delayed    = false,
                                        Boolean              Carbon     = false,
                                        String?              Corrects   = null,
-                                       OmemoIdentityCheck?  Identity   = null)
+                                       OmemoIdentityCheck?  Identity   = null,
+                                       String?              RepliesTo  = null,
+                                       String?              Quote      = null)
         {
             lock (@lock)
             {
@@ -368,7 +370,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                   Timestamp,
                                   Delayed,
                                   Carbon,
-                                  Corrects
+                                  Corrects,
+                                  RepliesTo,
+                                  Quote
                               ) {
                                   Identity = Identity
                               };

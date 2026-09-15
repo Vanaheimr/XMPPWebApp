@@ -106,6 +106,17 @@ export interface Message {
     delayed:    boolean;
     carbon:     boolean;
     corrects:   string | null;
+    /** XEP-0461: the id of the message this one answers */
+    repliesTo:  string | null;
+    /**
+     * The quoted lines an answer came with, taken out of the body.
+     *
+     * An answer carries the text it answers a second time, as "> " lines, for
+     * clients that cannot follow the reference. This one can, so the duplicate
+     * is kept here rather than in the body - but kept, because it is sometimes
+     * the only copy of what is being answered.
+     */
+    quote:      string | null;
     corrected:  boolean;
     delivered:  boolean;
     displayed:  boolean;

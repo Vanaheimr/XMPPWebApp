@@ -31,9 +31,11 @@ that talks to it.
 > in the per-user data directory) and nobody else's business, but in the clear.
 > OMEMO protects the wire and the server, not the disk of the machine that was
 > meant to read it. That is a decision, not an oversight, and it means the
-> machine this runs on is the trust boundary. There is no MAM, and one account
-> with one login is the whole model. A web client for the person who runs it;
-> not a service for other people.
+> machine this runs on is the trust boundary. There is no MAM, no rooms
+> (XEP-0045: the protocol is in Ratatoskr, the conversation list, the archive
+> and the screen here are built for two people talking), and one account with
+> one login is the whole model. A web client for the person who runs it; not a
+> service for other people.
 
 ---
 
@@ -79,8 +81,9 @@ that talks to it.
   by their last activity, with presence, status text, an unread badge and a
   typing indicator. The open conversation on the right, with day separators,
   delivery and read confirmations (XEP-0184, XEP-0333), corrections applied in
-  place (XEP-0308), messages from your other devices (XEP-0280), and late
-  deliveries where they were written (XEP-0203). Enter sends, Shift+Enter
+  place (XEP-0308), answers with what they answer above them (XEP-0461),
+  messages from your other devices (XEP-0280), and late deliveries where they
+  were written (XEP-0203). Enter sends, Shift+Enter
   breaks the line; the far end sees when you type (XEP-0085).
 - **Pictures inline.** A message that is nothing but one `https://` URL ending
   in `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif` or `.bmp` is shown as

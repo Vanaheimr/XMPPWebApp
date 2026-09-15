@@ -687,6 +687,18 @@ input, textarea, select {
 
     }
 
+    // XEP-0461: what is being answered. Dimmed and set back, because it is not
+    // what was said just now - somebody else wrote it, possibly long ago.
+    .quote {
+        margin:          0 0 0.35rem 0;
+        padding-left:    0.6rem;
+        border-left:     2px solid $color-muted;
+        font-size:       0.85rem;
+        color:           $color-muted;
+        white-space:     pre-wrap;
+        overflow-wrap:   anywhere;
+    }
+
     .meta {
         margin-top:  0.15rem;
         font-size:   0.7rem;

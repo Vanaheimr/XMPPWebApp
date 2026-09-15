@@ -482,14 +482,22 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return;
             }
 
+            // XEP-0461: Text and not Body. An answer carries the text it
+            // answers a second time, as "> " lines, for clients that cannot
+            // follow the reference - and putting both into the archive files the
+            // same sentence twice, once as somebody's line and once inside the
+            // answer to it. The quotation is kept beside the text instead,
+            // because it is sometimes the only copy of what is being answered.
             Chats.AddIncoming(
                 Message.FromBareJid,
                 Message.From.ToString(),
                 Message.MessageId,
-                Message.Body,
+                Message.Text,
                 new DateTimeOffset(Message.Timestamp),
-                Delayed:   Message.IsDelayed,
-                Corrects:  Message.ReplacesId
+                Delayed:    Message.IsDelayed,
+                Corrects:   Message.ReplacesId,
+                RepliesTo:  Message.RepliesTo?.Id,
+                Quote:      Message.Quote
             );
 
         }

@@ -714,6 +714,27 @@ class ChatView {
         for (const player of body.querySelectorAll('video, audio'))
             player.addEventListener('loadedmetadata', () => this.scrollIfAtBottom(), { once: true });
 
+        // XEP-0461: what is being answered, above the answer. The body no
+        // longer holds it, so leaving this out would lose the context entirely -
+        // which would be worse than the duplicate it replaces.
+        if (message.quote !== null && message.quote.length > 0) {
+
+            const quoted = document.createElement('blockquote');
+            quoted.className   = 'quote';
+
+            // The "> " is how the duplicate travels for clients without the
+            // extension. A blockquote says the same thing, so saying it twice
+            // is just noise.
+            quoted.textContent = message.quote
+                                     .replace(/\s+$/, '')
+                                     .split('\n')
+                                     .map(line => line.replace(/^>\s?/, ''))
+                                     .join('\n');
+
+            element.appendChild(quoted);
+
+        }
+
         element.appendChild(body);
 
         const meta = document.createElement('div');
