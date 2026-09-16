@@ -474,6 +474,31 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // the count of who can read this would be wrong.
             client.OnRoomJoined          += (timestamp, sender, room,         ct) => { if (Mine(client)) RoomJoined(client, room);      return Task.CompletedTask; };
             client.OnRoomLeft            += (timestamp, sender, room, why,    ct) => { if (Mine(client)) Rooms.Left(room.Address);      return Task.CompletedTask; };
+
+            // XEP-0045, section 10.9. Its own line and not the one above, and
+            // that is the whole reason this was written: until D130 a
+            // destruction arrived as an ordinary departure and this row
+            // disappeared by accident. Now the library tells the two apart, so
+            // a room taken down would have stayed in the list for ever with
+            // somebody typing into it - and the address everybody was sent to
+            // would have gone nowhere.
+            client.OnRoomDestroyed       += (timestamp, sender, destroyed,    ct) => {
+
+                                                if (!Mine(client))
+                                                    return Task.CompletedTask;
+
+                                                Rooms.Left(destroyed.Room);
+
+                                                PublishNotice("warning",
+                                                              $"{destroyed.Room} has been taken down" +
+                                                              (destroyed.Reason is not null ? $": {destroyed.Reason}" : ".") +
+                                                              (destroyed.Alternate is JID goingTo
+                                                                   ? $" Everybody was sent to {goingTo}."
+                                                                   : ""));
+
+                                                return Task.CompletedTask;
+
+                                            };
             client.OnOccupantJoined      += (timestamp, sender, room, who, w, ct) => { if (Mine(client)) RoomChanged(client, room);     return Task.CompletedTask; };
             client.OnOccupantChanged     += (timestamp, sender, room, who, w, ct) => { if (Mine(client)) RoomChanged(client, room);     return Task.CompletedTask; };
             client.OnOccupantLeft        += (timestamp, sender, room, who, w, ct) => { if (Mine(client)) RoomChanged(client, room);     return Task.CompletedTask; };

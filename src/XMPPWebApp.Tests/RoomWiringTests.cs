@@ -411,6 +411,47 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ADestroyedRoomDoesNotStayInTheList()
+
+        /// <summary>
+        /// XEP-0045, section 10.9: the room is gone, and so is its row.
+        /// </summary>
+        /// <remarks>
+        /// <b>Written because D130 nearly broke it.</b> Until then a destruction
+        /// reached this app as an ordinary departure - the library could not
+        /// tell the two apart - and the row disappeared by accident. The moment
+        /// the library learned the difference, this app stopped hearing about it
+        /// at all, and a room taken down would have stayed in the list for ever
+        /// with somebody typing into it.
+        ///
+        /// A working thing that works for the wrong reason breaks as soon as the
+        /// reason is corrected, and nothing said so. This round is what says so.
+        /// </remarks>
+        [Test]
+        public async Task ADestroyedRoomDoesNotStayInTheList()
+        {
+
+            var session = await JoinAsync();
+
+            Assert.That(TheRoom(), Is.Not.Null);
+
+            await session.SendAsync(
+                $"<presence from='{RoomJid}/me' to='{api!.Client!.FullJid}' type='unavailable'>" +
+                    "<x xmlns='http://jabber.org/protocol/muc#user'>" +
+                        "<item affiliation='none' role='none'/>" +
+                        $"<destroy jid='moved@conference.{xmpp!.Domain}'>" +
+                            "<reason>moving on</reason>" +
+                        "</destroy>" +
+                    "</x>" +
+                "</presence>");
+
+            await Until(() => TheRoom() is null,
+                        "the destroyed room to leave the list");
+
+        }
+
+        #endregion
+
     }
 
 }
