@@ -64,6 +64,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             public Int32               Unread           { get; set; }
             public DateTimeOffset?     LastActivity     { get; set; }
             public Boolean             EncryptionOn     { get; set; } = true;
+            public String?             Avatar           { get; set; }
             public List<ChatMessage>   Messages         { get; }      = [];
 
             /// <summary>
@@ -91,7 +92,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                         Unread,
                         Messages.Count > 0 ? Messages[^1] : null,
                         LastActivity,
-                        EncryptionOn);
+                        EncryptionOn,
+                        Avatar);
 
         }
 
@@ -790,6 +792,40 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                     return conversation.Summary();
 
                 conversation.PeerChatState = State;
+
+                return Changed(conversation);
+
+            }
+        }
+
+        #endregion
+
+        #region SetAvatar(Chat, Id)
+
+        /// <summary>
+        /// XEP-0084: this contact's picture is the one with this id, or none.
+        /// </summary>
+        /// <remarks>
+        /// <b>Only for conversations that exist</b>, like presence and the chat
+        /// state above it. Every contact has one - <see cref="SetContact"/>
+        /// makes it as the roster arrives - so what this refuses is a stranger:
+        /// an announcement is supposed to follow a presence subscription, but
+        /// that is the far server's discipline and not ours, and a picture from
+        /// somebody nobody knows must not put a row in the list.
+        /// </remarks>
+        public ChatSummary? SetAvatar(JID      Chat,
+                                      String?  Id)
+        {
+            lock (@lock)
+            {
+
+                if (!chats.TryGetValue(Chat.Bare, out var conversation))
+                    return null;
+
+                if (conversation.Avatar == Id)
+                    return conversation.Summary();
+
+                conversation.Avatar = Id;
 
                 return Changed(conversation);
 

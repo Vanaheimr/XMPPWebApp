@@ -119,6 +119,18 @@ that talks to it.
   gets the message, so it is the host that is shut out, not the conversation.
   The limit the service announces is asked for before anything is sent, and a
   file name that carries a path is refused rather than repaired.
+- **Faces.** Avatars over PEP (XEP-0084), in the conversation list, in the
+  header of the open chat, and on the settings page where one is published or
+  taken down. **An announcement from a contact causes a fetch here**, which is
+  the one place this app differs from the console on purpose: a terminal cannot
+  draw a face, so fetching would buy it nothing, and a list without faces is the
+  feature not being there. What that hands a contact is bounded on purpose — one
+  round trip to their own node through our own server, never an address they
+  chose; only for somebody in the roster; only a type the app will serve, never
+  `image/svg+xml`; at most 256 KiB, and only when the id says the picture is not
+  already here. The id *is* the SHA-1 of the bytes, so it is also what is
+  checked against them and what the address is keyed by — one picture, one
+  address, cacheable for ever.
 - **Encrypted messages, both ways.** OMEMO (XEP-0384), and the lock is drawn
   per line rather than per conversation — because a conversation can hold
   both, and a lock over all of it would be wrong for half the lines. **What

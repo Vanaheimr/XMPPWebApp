@@ -20,6 +20,14 @@ export interface AccountInfo {
     trustAnnouncement:  boolean;
     /** whether a password is stored; the page never receives the password itself */
     passwordSet:        boolean;
+    /**
+     * XEP-0084: the id of the picture this account last published, or null.
+     *
+     * Not a setting and not in the account file: it is what the server holds,
+     * and pointing this app at a different server would make it somebody
+     * else's question.
+     */
+    avatar:             string | null;
 }
 
 /** What the account page sends: the same fields, and a password only when changing it. */
@@ -171,6 +179,15 @@ export interface Chat {
      * when it cannot, and every line says which of the two it was.
      */
     encryption:      'auto' | 'off';
+    /**
+     * XEP-0084: the id of this contact's picture, or null when they have none
+     * this app kept.
+     *
+     * The id is the SHA-1 of the bytes, which is why it is the id and not an
+     * address: it changes exactly when the face does, so `avatarURL` builds an
+     * address that can be cached forever and is never stale.
+     */
+    avatar:          string | null;
 }
 
 /** The XMPP connection of the web app. */
@@ -317,10 +334,10 @@ const jid = (value: string) => encodeURIComponent(value);
  * file's rather than application/json. Folding that into `request` would mean a
  * branch in the one function every other call goes through.
  */
-async function sendBytes<T>(path: string, file: File): Promise<T> {
+async function sendBytes<T>(path: string, file: File, method: string = 'POST'): Promise<T> {
 
     const response = await fetch(config.apiBase + path, {
-                               method:       'POST',
+                               method,
                                // Whatever the browser made of the file, or
                                // nothing: the server does not believe it either
                                // way - it works the type out from the name, and
@@ -343,7 +360,7 @@ async function sendBytes<T>(path: string, file: File): Promise<T> {
     }
     catch {
         if (response.ok)
-            throw new ApiError(response.status, `Invalid JSON in the response of POST ${path}`, text);
+            throw new ApiError(response.status, `Invalid JSON in the response of ${method} ${path}`, text);
     }
 
     if (!response.ok) {
@@ -396,8 +413,29 @@ export const api = {
     account: {
         get:     ()                       => request<AccountResponse>('GET',    '/account'),
         save:    (account: AccountUpdate, confirm: Confirmation)  => request<AccountResponse>('PUT',    '/account', { ...account, confirm }),
-        forget:  (confirm: Confirmation)                          => request<AccountResponse>('DELETE', '/account', { confirm })
+        forget:  (confirm: Confirmation)                          => request<AccountResponse>('DELETE', '/account', { confirm }),
+
+        /**
+         * XEP-0084: publishes a picture, or takes the published one down.
+         *
+         * No confirmation, unlike saving the account or forgetting it: those
+         * two point this program at a server or hand it a password, and this
+         * one changes a picture that can be changed back. What it does do is
+         * tell everybody subscribed, which is the whole point of it.
+         */
+        setAvatar:     (file: File) => sendBytes<{ avatar: string; type: string; bytes: number }>('/account/avatar', file, 'PUT'),
+        removeAvatar:  ()           => request<{ avatar: null }>('DELETE', '/account/avatar')
     },
+
+    /**
+     * XEP-0084: where a face is served from.
+     *
+     * By the id, which is the SHA-1 of the bytes - so this address means one
+     * particular picture for ever and the browser is told to keep it for ever.
+     * Same origin, so the session cookie travels with it and no other host is
+     * ever asked who is looking at whom.
+     */
+    avatarURL:  (id: string) => `${config.apiBase}/avatars/${encodeURIComponent(id)}`,
 
 
 

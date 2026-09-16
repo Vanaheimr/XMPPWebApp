@@ -331,6 +331,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// XEP-0384: whether this program may encrypt to this conversation at all -
     /// false when somebody turned it off here.
     /// </param>
+    /// <param name="Avatar">
+    /// XEP-0084: the id of this contact's picture, or null when they have none
+    /// that this client kept.
+    /// </param>
     public sealed record ChatSummary(JID                Jid,
                                      String?            Name,
                                      Boolean            InRoster,
@@ -342,7 +346,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                      Int32              Unread,
                                      ChatMessage?       LastMessage,
                                      DateTimeOffset?    LastActivity,
-                                     Boolean            EncryptionOn   = true)
+                                     Boolean            EncryptionOn   = true,
+                                     String?            Avatar         = null)
     {
 
         /// <summary>
@@ -371,7 +376,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                    // "auto" and not "on", because on is not what it does: it
                    // encrypts when the far end can read it and says per line
                    // what happened. Off is the only state somebody chose.
-                   new JProperty("encryption",      EncryptionOn ? "auto" : "off")
+                   new JProperty("encryption",      EncryptionOn ? "auto" : "off"),
+
+                   // XEP-0084: the id and not the picture. It is the SHA-1 of
+                   // the bytes, so the address the browser builds out of it
+                   // changes exactly when the face does - which is what lets
+                   // that address be cached forever without ever being stale.
+                   new JProperty("avatar",          Avatar)
                );
 
     }

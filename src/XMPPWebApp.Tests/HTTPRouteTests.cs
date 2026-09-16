@@ -277,6 +277,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             var account  = await browser.GetAsync("api/v1/account");
             var events   = await browser.GetAsync("api/v1/events");
             var media    = await browser.GetAsync("api/v1/chats/alice@example.org/media/20260914T120000Z_x.png");
+            var avatar   = await browser.GetAsync("api/v1/avatars/da39a3ee5e6b4b0d3255bfef95601890afd80709");
 
             Assert.Multiple(() =>
             {
@@ -284,6 +285,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 Assert.That(account.StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized));
                 Assert.That(events. StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "the stream is checked before it is opened");
                 Assert.That(media.  StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "the pictures of a conversation are the conversation");
+
+                // An avatar is published to everybody subscribed and is not a
+                // secret. Which of them this account has in its roster is, and
+                // an open route would answer "is this picture one of yours" for
+                // any id anybody cared to try.
+                Assert.That(avatar. StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "whose face is in whose roster is the roster");
             });
 
         }
@@ -535,6 +542,43 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             Assert.That(wanted.StatusCode,
                         Is.AnyOf(HttpStatusCode.BadRequest, HttpStatusCode.NotFound),
                         "a name is a name; it never becomes a path");
+
+            Assert.That(await wanted.Content.ReadAsStringAsync(),
+                        Does.Not.Contain("hash"),
+                        "and nothing of the login file comes back either way");
+
+        }
+
+        #endregion
+
+        #region TheAvatarRoute_RefusesAnIdThatIsAPath()
+
+        /// <summary>
+        /// The same question one route further along, and a different answer to
+        /// it.
+        /// </summary>
+        /// <remarks>
+        /// The media route checks a file name against a list of what a name may
+        /// not contain. An avatar id has a shape - forty lower-case hex digits -
+        /// so it is checked against that instead, which cannot be short by one
+        /// character the way a list of forbidden things always can.
+        ///
+        /// What the traversal is aimed at here is the account file, which lies
+        /// in the data directory the avatars hang below.
+        /// </remarks>
+        [Test]
+        public async Task TheAvatarRoute_RefusesAnIdThatIsAPath()
+        {
+
+            using var browser = Browser();
+
+            await SignIn(browser);
+
+            var wanted = await browser.GetAsync("api/v1/avatars/..%2F..%2Fweb-login.json");
+
+            Assert.That(wanted.StatusCode,
+                        Is.AnyOf(HttpStatusCode.BadRequest, HttpStatusCode.NotFound),
+                        "an id is a hash; it never becomes a path");
 
             Assert.That(await wanted.Content.ReadAsStringAsync(),
                         Does.Not.Contain("hash"),

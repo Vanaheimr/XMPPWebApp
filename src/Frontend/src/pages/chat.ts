@@ -439,6 +439,7 @@ class ChatView {
                    href="/chats/${encodeURIComponent(chat.jid)}"
                    data-jid="${chat.jid}"
                    title="${chat.jid}${chat.status ? ' – ' + chat.status : ''}">
+                    ${avatar(chat.displayName, chat.avatar, chat.jid)}
                     <span class="dot ${chat.presence}" title="${presenceLabel(chat.presence)}"></span>
                     <span class="chat-name">${chat.displayName}</span>
                     <span class="chat-time">${formatListTime(chat.lastActivity)}</span>
@@ -475,6 +476,7 @@ class ChatView {
 
         render(this.peer, html`
             <button type="button" class="btn small back" title="Back to the list"><i class="fa-solid fa-arrow-left"></i></button>
+            ${avatar(chat?.displayName ?? jid, chat?.avatar ?? null, jid)}
             <span class="dot ${chat?.presence ?? 'offline'}"></span>
             <div class="peer-info">
                 <div class="peer-name">${chat?.displayName ?? jid}</div>
@@ -940,6 +942,48 @@ class ChatView {
         window.setTimeout(() => toast.remove(), TOAST_MS);
 
     }
+
+}
+
+
+/**
+ * XEP-0084: somebody's face, or the initials that stand in for one.
+ *
+ * The initials are not a placeholder for a picture that is coming: most people
+ * in most rosters have never published one, and a row of identical grey
+ * silhouettes is a list nobody can scan. Two letters of the name at least
+ * differ from each other.
+ *
+ * `loading="lazy"` because a long roster is a long list of requests otherwise,
+ * and `decoding="async"` so a picture that turns out to be malformed cannot
+ * hold up the row it is in. Neither the name nor the id reaches innerHTML
+ * unescaped - html`` escapes both, and the id is forty hex digits or the route
+ * refuses it.
+ */
+function avatar(name: string, id: string | null, jid: string): HTMLFragment {
+
+    if (id !== null)
+        return html`<img class="avatar" src="${api.avatarURL(id)}" alt="" loading="lazy" decoding="async" title="${jid}">`;
+
+    return html`<span class="avatar initials" aria-hidden="true">${initials(name)}</span>`;
+
+}
+
+/** One or two letters to stand in for a face. */
+function initials(name: string): string {
+
+    // The JID of somebody without a name starts with the local part, which is
+    // what anybody would read them by, so taking the front of the string works
+    // for both. Split on the separators a name uses and a JID does not.
+    const parts = name.split(/[\s._-]+/u).filter(part => part.length > 0);
+
+    if (parts.length === 0)
+        return '?';
+
+    const first = Array.from(parts[0])[0] ?? '';
+    const last  = parts.length > 1 ? Array.from(parts[parts.length - 1])[0] ?? '' : '';
+
+    return (first + last).toUpperCase();
 
 }
 

@@ -330,6 +330,56 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AnAvatar_OnlyForChatsThatExist()
+
+        /// <summary>
+        /// XEP-0084: a face, like presence, does not open a conversation.
+        /// </summary>
+        /// <remarks>
+        /// Every contact has one already - <see cref="ChatStore.SetContact"/>
+        /// makes it as the roster arrives - so what this refuses is a stranger.
+        /// An announcement is supposed to follow a presence subscription, but
+        /// that is the far server's discipline and not ours, and a picture from
+        /// somebody nobody knows must not put a row in the list.
+        ///
+        /// The second lock, and the second only: what stops this program from
+        /// <i>fetching</i> a stranger's picture is the roster check in the
+        /// handler, which is where it costs a round trip. This is what stops it
+        /// from being shown if that ever gives way.
+        /// </remarks>
+        [Test]
+        public void AnAvatar_OnlyForChatsThatExist()
+        {
+
+            var store = new ChatStore();
+            var id    = new String('a', 40);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(store.SetAvatar(alice, id), Is.Null, "a stranger's picture was accepted");
+                Assert.That(store.Count,                Is.EqualTo(0), "and it opened a conversation");
+            });
+
+            var contact = store.SetContact(alice, "Alice", SubscriptionState.Both);
+
+            Assert.That(contact.Avatar, Is.Null, "a fresh contact starts with a face");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(store.SetAvatar(alice, id)?.Avatar, Is.EqualTo(id));
+
+                // And the removal, which is a different thing from never having
+                // heard of one: a node left alone goes on announcing the old
+                // picture, so taking one down has to arrive as something.
+                Assert.That(store.SetAvatar(alice, null)?.Avatar, Is.Null);
+
+            });
+
+        }
+
+        #endregion
+
         #region APendingRequest_OpensTheChat()
 
         [Test]

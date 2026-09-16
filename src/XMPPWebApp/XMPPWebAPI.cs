@@ -138,6 +138,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         public PlaintextChats?           PlaintextChats { get; }
 
         /// <summary>
+        /// XEP-0084: the faces in the conversation list, or null when there is
+        /// nowhere to keep them.
+        /// </summary>
+        /// <remarks>
+        /// The same shape as <see cref="Archive"/> and
+        /// <see cref="PlaintextChats"/>: a place to keep things, or nothing and
+        /// the feature is not there. Nothing is fetched and no route answers
+        /// when this is null, which is what a process started without a data
+        /// directory gets.
+        /// </remarks>
+        public AvatarStore?              Avatars        { get; }
+
+        /// <summary>
         /// The Server-Sent Events source every browser hangs on (/api/v1/events).
         /// </summary>
         public HTTPEventSource<JObject>  Events         { get; }
@@ -223,6 +236,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             this.PlaintextChats = OmemoDirectory is null
                                       ? null
                                       : new PlaintextChats(Path.Combine(OmemoDirectory, XMPPWebApp.Chats.PlaintextChats.DefaultFileName));
+
+            // And the faces beside them, when there is a directory to put them
+            // in. An empty DataDirectory means this process was given nowhere
+            // to write, and "nowhere" is not the working directory.
+            this.Avatars        = DataDirectory.Length == 0
+                                      ? null
+                                      : new AvatarStore(DataDirectory);
             this.loggerFactory  = LoggerFactory;
             this.logger         = LoggerFactory?.CreateLogger<XMPPWebAPI>() ?? NullLogger<XMPPWebAPI>.Instance;
 
@@ -265,6 +285,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 this.Client    = WireUp(Settings);
 
                 Archive?.UseAccount(Settings.BareJID);
+                Avatars?.UseAccount(Settings.BareJID);
 
             }
 
@@ -293,6 +314,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/account",                  GetAccount,     HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/account",                  PutAccount,     HTTPMethod.PUT);
             AddHandler(HTTPPath.Root + "v1/account",                  DeleteAccount,  HTTPMethod.DELETE);
+
+            // XEP-0084. The own picture hangs off the account because that is
+            // what it is a property of; everybody's picture, ours included, is
+            // read back through the one address below, which is keyed by the
+            // hash of the bytes and not by whose face it is.
+            AddHandler(HTTPPath.Root + "v1/account/avatar",           PutOwnAvatar,     HTTPMethod.PUT);
+            AddHandler(HTTPPath.Root + "v1/account/avatar",           DeleteOwnAvatar,  HTTPMethod.DELETE);
+            AddHandler(HTTPPath.Root + "v1/avatars/{id}",             GetAvatar,        HTTPMethod.GET);
 
             // The web login of this page used to be a route of its own here.
             // It is HTTPExtAPI's now: GET and PUT /api/auth/me for the account
@@ -783,6 +812,210 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 builder.SetHeaderField("Content-Disposition", "attachment");
 
             return Task.FromResult(builder.WithCommonSecurityHeaders().AsImmutable);
+
+        }
+
+        #endregion
+
+        #region (private) GetAvatar      (Request)
+
+        /// <summary>
+        /// GET /api/v1/avatars/{id}: somebody's picture (XEP-0084).
+        /// </summary>
+        /// <remarks>
+        /// <b>By the id and not by the JID</b>, because the id is the SHA-1 of
+        /// the bytes: this address means one particular picture forever, so it
+        /// can be cached forever, and a contact who changes their face changes
+        /// the address rather than the content behind it. Keying it by JID would
+        /// give an address whose content changes, which is the one thing a cache
+        /// cannot be told about after the fact.
+        ///
+        /// These bytes came from a contact and go out of this program's own
+        /// origin, so the same rules as <see cref="GetMedia"/>: the type is the
+        /// one <see cref="AvatarStore"/> stored it as and never one guessed from
+        /// anything in the request, and nosniff throughout. The store also
+        /// refused to keep anything whose first bytes disagreed with its claimed
+        /// type, so what is served here has at least said the same thing twice.
+        ///
+        /// A session is required. A picture is not a secret - it is published to
+        /// everybody subscribed - but who <i>this</i> account has in its roster
+        /// is, and an open route would answer "is this picture one of yours"
+        /// for any id anybody cared to try.
+        /// </remarks>
+        private Task<HTTPResponse> GetAvatar(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            if (Avatars is null ||
+                !Avatars.TryGet(Request.TryGetURLParameter("id") ?? "", out var path, out var contentType))
+            {
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "No such picture."));
+            }
+
+            Byte[] content;
+
+            try
+            {
+                content = File.ReadAllBytes(path!);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("The avatar '{Path}' could not be read: {Error}", path, e.Message);
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.InternalServerError, "The picture could not be read."));
+            }
+
+            return Task.FromResult(
+                       new HTTPResponse.Builder(Request) {
+                           HTTPStatusCode  = HTTPStatusCode.OK,
+                           ContentType     = HTTPContentType.TryParse(contentType, out var parsed)
+                                                 ? parsed
+                                                 : HTTPContentType.Application.OCTETSTREAM,
+                           Content         = content,
+                           // The name is the hash of the content, so this is
+                           // the one case where "immutable" is not a hope. And
+                           // private: whose face it is is the roster.
+                           CacheControl    = "private, max-age=31536000, immutable"
+                       }.WithCommonSecurityHeaders().AsImmutable
+                   );
+
+        }
+
+        #endregion
+
+        #region (private) PutOwnAvatar   (Request) / DeleteOwnAvatar(Request)
+
+        /// <summary>
+        /// PUT /api/v1/account/avatar with the image as the body: publishes it
+        /// over PEP (XEP-0084 over XEP-0163).
+        /// </summary>
+        /// <remarks>
+        /// <b>The type is read out of the bytes and not out of the request.</b>
+        /// A Content-Type header would be a claim by the browser about a file
+        /// the person picked, and it travels on to every contact as the type
+        /// they will be told the picture is - so it is taken from the one place
+        /// that cannot be wrong by accident.
+        ///
+        /// It goes through <see cref="AvatarStore"/> on the way out as well,
+        /// which is not symmetry for its own sake: the page shows its own face
+        /// from the same route as everybody else's, and a picture that was
+        /// published but not kept would be a face in the roster of every contact
+        /// and a blank in ours.
+        /// </remarks>
+        private async Task<HTTPResponse> PutOwnAvatar(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (Avatars is null)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable,
+                                 "This process has nowhere to keep pictures.");
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            var content = Request.HTTPBody;
+
+            if (content is null || content.Length == 0)
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, "There is no picture in the request.");
+
+            if (content.Length > AvatarStore.MaxBytes)
+                return ErrorJSON(Request, HTTPStatusCode.RequestEntityTooLarge,
+                                 $"The picture is {content.Length} bytes; an avatar travels inside a " +
+                                 $"stanza and {AvatarStore.MaxBytes} is the most that is sent or read.");
+
+            var type = AvatarStore.AllowedTypes.Keys.FirstOrDefault(candidate => AvatarStore.LooksLike(candidate, content));
+
+            if (type is null)
+                return ErrorJSON(Request, HTTPStatusCode.UnsupportedMediaType,
+                                 "That is not a PNG, JPEG, GIF or WebP.");
+
+            AvatarInfo? info;
+
+            try
+            {
+                info = await client.PublishAvatarAsync(content, type);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("Publishing the avatar failed: {Error}", e.Message);
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"The picture could not be published: {e.Message}");
+            }
+
+            if (info is null)
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway,
+                                 "The server would not take the picture. Does it do personal eventing (XEP-0163)?");
+
+            var (id, problem) = await Avatars.StoreAsync(client.BareJid, info, content);
+
+            if (id is null)
+                logger.LogWarning("The published avatar was not kept here: {Problem}", problem);
+
+            // No event goes out. Everybody subscribed was told over PEP, which
+            // is what publishing means; the browser that did this is told by
+            // this response. A second settings page open somewhere else shows
+            // the old picture until it is reloaded, and that is left as it is
+            // rather than given a stream event of its own - the account travels
+            // to the browsers on connection changes and this is not one.
+            return JSONResponse(
+                       Request,
+                       HTTPStatusCode.OK,
+                       new JObject(
+                           new JProperty("avatar", info.Id),
+                           new JProperty("type",   info.Type),
+                           new JProperty("bytes",  info.Bytes)
+                       )
+                   );
+
+        }
+
+        /// <summary>
+        /// DELETE /api/v1/account/avatar: takes the picture down (XEP-0084,
+        /// section 4).
+        /// </summary>
+        /// <remarks>
+        /// An empty <c>&lt;metadata/&gt;</c> goes out and the data node is left
+        /// alone, which is what the specification asks for - the library does
+        /// that part. Here the local copy is forgotten rather than deleted, for
+        /// the same reason: it may be somebody else's face too, and a picture
+        /// that comes back is one that need not be fetched again.
+        /// </remarks>
+        private async Task<HTTPResponse> DeleteOwnAvatar(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            Boolean gone;
+
+            try
+            {
+                gone = await client.RemoveAvatarAsync();
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("Removing the avatar failed: {Error}", e.Message);
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"The picture could not be taken down: {e.Message}");
+            }
+
+            if (!gone)
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway,
+                                 "The server would not take the picture down.");
+
+            Avatars?.Forget(client.BareJid);
+
+            return JSONResponse(Request, HTTPStatusCode.OK, new JObject(new JProperty("avatar", null as String)));
 
         }
 

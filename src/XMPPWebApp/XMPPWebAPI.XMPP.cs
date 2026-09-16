@@ -374,8 +374,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             ConnectedAt  = null;
 
             // The archive is filed by account, so it has to learn of the change
-            // before the first message of the new one arrives.
+            // before the first message of the new one arrives. So are the
+            // avatars, and for a sharper reason: they are served by id from a
+            // route that has no account in it, so a store still pointing at the
+            // previous account would answer this one's browser out of somebody
+            // else's pictures.
             Archive?.UseAccount(NewSettings?.BareJID);
+            Avatars?.UseAccount(NewSettings?.BareJID);
 
             ApplyPlaintextChats(NewSettings?.BareJID);
 
@@ -443,7 +448,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             client.OnPresenceChanged     += (timestamp, sender, from, type,   ct) => { if (Mine(sender)) HandlePresence   (sender, from); return Task.CompletedTask; };
             client.OnStateChanged        += (timestamp, sender, old, current, ct) => { if (Mine(sender)) HandleState      (sender, old, current); return Task.CompletedTask; };
 
-            client.OnRosterItemAdded     += (timestamp, sender, item,         ct) => { if (Mine(sender)) Chats.SetContact(item.BareJid, item.Name, item.Subscription); return Task.CompletedTask; };
+            // XEP-0084, and the only handler here that does anything slow: it
+            // may go and fetch a picture. Awaited rather than forgotten, so two
+            // announcements from the same contact cannot race each other into
+            // the store and leave the older one showing.
+            //
+            // On the connection and not on the client, because that is where
+            // the event is - and therefore Mine(client), like the roster above,
+            // since the sender is the connection and not the client.
+            client.Connection.OnAvatarChanged
+                                         += async (timestamp, sender, jid, infos, ct) => { if (Mine(client)) await HandleAvatarChangedAsync(client, jid, infos, ct); };
+
+            client.OnRosterItemAdded     += (timestamp, sender, item,         ct) => { if (Mine(sender)) { Chats.SetContact(item.BareJid, item.Name, item.Subscription); RestoreAvatar(item.BareJid); } return Task.CompletedTask; };
             client.Roster.OnItemUpdated  += (timestamp, sender, item,         ct) => { if (Mine(client)) Chats.SetContact(item.BareJid, item.Name, item.Subscription); return Task.CompletedTask; };
             client.OnRosterItemRemoved   += (timestamp, sender, jid,          ct) => { if (Mine(sender)) Chats.RemoveContact(jid);                                      return Task.CompletedTask; };
             client.OnSubscriptionRequest += (timestamp, sender, from, status, ct) => { if (Mine(sender)) Chats.SetPendingRequest(from.Bare, true);                      return Task.CompletedTask; };
@@ -1078,6 +1094,147 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
         #endregion
 
+        #region (private) HandleAvatarChangedAsync(Client, Jid, Infos, CancellationToken) / RestoreAvatar(Jid)
+
+        /// <summary>
+        /// XEP-0084: somebody's picture changed, was taken down, or is simply
+        /// being announced again because they came online.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is the one place in this program where somebody else's
+        /// announcement causes a request</b>, so it is worth saying exactly what
+        /// that hands them and why it is still the right thing.
+        ///
+        /// The console does the opposite: it shows a note and fetches nothing,
+        /// because a terminal cannot draw a face anyway, so the fetch would buy
+        /// nothing at all. A page can draw one, and a conversation list without
+        /// faces is the feature not being there.
+        ///
+        /// What a contact gets by announcing, then: one IQ round trip through
+        /// our own server to their own PEP node - not an address they chose, so
+        /// none of <see cref="MediaStore"/>'s problem - and at most
+        /// <see cref="AvatarStore.MaxBytes"/> written to this disk, bounded
+        /// again by <see cref="AvatarStore.MaxTotalBytes"/> across all of them.
+        /// Three things keep that small:
+        ///
+        ///   - <b>only contacts.</b> <see cref="ChatStore.SetAvatar"/> refuses a
+        ///     JID that has no conversation, and every contact has one; a
+        ///     stranger's announcement therefore ends here having cost a
+        ///     dictionary lookup;
+        ///
+        ///   - <b>only what will be shown.</b> <see cref="AvatarStore.Acceptable"/>
+        ///     is asked <i>before</i> the round trip, so a picture that is too
+        ///     large, of a type this does not serve, or offered only over HTTP
+        ///     costs nothing;
+        ///
+        ///   - <b>only what is not already here.</b> The id is the hash of the
+        ///     bytes, so the usual case - a contact coming online and announcing
+        ///     the picture this client has had for a month - is a lookup and a
+        ///     return.
+        /// </remarks>
+        private async Task HandleAvatarChangedAsync(XMPPClient                 Client,
+                                                    JID                        Jid,
+                                                    IReadOnlyList<AvatarInfo>  Infos,
+                                                    CancellationToken          CancellationToken)
+        {
+
+            if (Avatars is null || Jid.Bare == Client.BareJid)
+                return;
+
+            // An empty list is the removal (XEP-0084, section 4) and is the
+            // reason the library distinguishes it from an announcement it could
+            // not read: a node left alone goes on announcing the old picture,
+            // so taking one down has to arrive as something.
+            if (Infos.Count == 0)
+            {
+                Avatars.Forget(Jid.Bare);
+                Chats.SetAvatar(Jid.Bare, null);
+                return;
+            }
+
+            var wanted = Infos.FirstOrDefault(AvatarStore.Acceptable);
+
+            if (wanted is null)
+            {
+                logger.LogDebug("XEP-0084: nothing usable in what {Jid} announced ({Infos})",
+                                Jid, String.Join(", ", Infos));
+                return;
+            }
+
+            // Already on the disk - which is the common case and the whole
+            // point of publishing the id rather than the picture.
+            if (Avatars.Has(wanted.Id))
+            {
+                Avatars.Remember(Jid.Bare, wanted.Id);
+                Chats.SetAvatar(Jid.Bare, wanted.Id);
+                return;
+            }
+
+            // And only now, and only for a contact, a round trip. Asked of the
+            // roster rather than of the chat store, because this is the question
+            // being asked - "do we know this person" - and not a side effect of
+            // one that happens to answer it.
+            if (Client.Roster.GetItem(Jid.Bare) is null)
+            {
+                logger.LogDebug("XEP-0084: {Jid} announced a picture and is not a contact; not fetched", Jid);
+                return;
+            }
+
+            try
+            {
+
+                var avatar = await Client.FetchAvatarAsync(Jid.Bare, wanted, CancellationToken);
+
+                if (avatar is null)
+                {
+                    logger.LogDebug("XEP-0084: the picture {Id} of {Jid} could not be fetched, or was " +
+                                    "not the one announced", wanted.Id, Jid);
+                    return;
+                }
+
+                var (id, problem) = await Avatars.StoreAsync(Jid.Bare, avatar.Info, avatar.Data, CancellationToken);
+
+                if (id is null)
+                {
+                    logger.LogDebug("XEP-0084: the picture of {Jid} was not kept: {Problem}", Jid, problem);
+                    return;
+                }
+
+                Chats.SetAvatar(Jid.Bare, id);
+
+            }
+            catch (Exception e)
+            {
+                // A face that could not be fetched is a missing face, which is
+                // what the list shows for everybody who never published one.
+                logger.LogDebug("XEP-0084: fetching the picture of {Jid} failed: {Error}", Jid, e.Message);
+            }
+
+        }
+
+        /// <summary>
+        /// Puts the face this client already has back on a contact.
+        /// </summary>
+        /// <remarks>
+        /// Called as the roster arrives, and it is what makes the list look
+        /// right at a start rather than one announcement later. An announcement
+        /// comes when a contact is online and something happens; without this,
+        /// somebody who signs in before their contacts do would see a list of
+        /// blanks fill in over the following minutes, having had every one of
+        /// those pictures on the disk the whole time.
+        /// </remarks>
+        private void RestoreAvatar(JID Jid)
+        {
+
+            var id = Avatars?.IdOf(Jid.Bare);
+
+            if (id is not null)
+                Chats.SetAvatar(Jid.Bare, id);
+
+        }
+
+        #endregion
+
         #region (private) HandlePresence  (Client, From)
 
         /// <summary>
@@ -1262,8 +1419,24 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// configured yet. <see cref="AccountResponseJSON"/> in XMPPWebAPI.cs
         /// wraps it with the connection for the account routes.
         /// </summary>
+        /// <remarks>
+        /// The picture is added here rather than inside
+        /// <see cref="AccountSettings"/>, because it is not a setting: it is not
+        /// written into the account file, it does not survive being pointed at a
+        /// different server, and it is not ours to keep - it is what this
+        /// account last published, which the server holds.
+        /// </remarks>
         private JObject? AccountJSON()
-            => Settings?.ToJSON(IncludePassword: false);
+        {
+
+            var json = Settings?.ToJSON(IncludePassword: false);
+
+            if (json is not null && Settings is not null)
+                json.Add(new JProperty("avatar", Avatars?.IdOf(Settings.BareJID)));
+
+            return json;
+
+        }
 
         #endregion
 

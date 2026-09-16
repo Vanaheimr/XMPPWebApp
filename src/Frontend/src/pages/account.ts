@@ -22,13 +22,15 @@ export const accountPage: Page = {
                 <h1><i class="fa-solid fa-gear"></i> Settings</h1>
                 <p id="intro" class="muted">Loading …</p>
                 <div id="xmpp-area"></div>
+                <div id="avatar-area"></div>
                 <div id="me-area"></div>
             </section>
         `);
 
-        const intro     = must<HTMLElement>(root, '#intro');
-        const xmppArea  = must<HTMLElement>(root, '#xmpp-area');
-        const loginArea = must<HTMLElement>(root, '#me-area');
+        const intro      = must<HTMLElement>(root, '#intro');
+        const xmppArea   = must<HTMLElement>(root, '#xmpp-area');
+        const avatarArea = must<HTMLElement>(root, '#avatar-area');
+        const loginArea  = must<HTMLElement>(root, '#me-area');
 
         let current: AccountResponse;
         let me: Me;
@@ -49,6 +51,11 @@ export const accountPage: Page = {
             // scratch, so the form empties and the card loses its danger zone.
             void accountPage.render({ root, params: {}, url: new URL(location.href), navigate });
         });
+
+        // Only with an account: a picture is published to a server, so there is
+        // nothing to offer before there is one.
+        if (current.configured && current.account !== null)
+            renderAvatar(avatarArea, current.account.avatar);
 
         renderMe(loginArea, me);
 
@@ -374,6 +381,125 @@ function renderXMPP(area:      HTMLElement,
         })();
 
     });
+
+}
+
+
+// ---------------------------------------------------------------------------
+// XEP-0084: the picture this account publishes
+
+/**
+ * The own avatar: show it, replace it, take it down.
+ *
+ * A card of its own and not a field in the account form, and the reason is what
+ * the two do. Saving the account points this program at a server and reconnects
+ * it, which is why it asks for a password first; publishing a picture tells
+ * everybody subscribed what one looks like and can be undone by clicking once
+ * more. Putting them in one form would mean either asking for a password to
+ * change a picture, or not asking for one to change a server.
+ */
+function renderAvatar(area: HTMLElement, current: string | null): void {
+
+    let shown = current;
+
+    const draw = (): void => {
+
+        render(area, html`
+            <div class="card">
+
+                <h2>Your picture</h2>
+
+                <p class="muted small">
+                    Published over PEP (XEP-0084), which means everybody who has you in their
+                    contacts and is subscribed to your presence is told about it. It is not a
+                    secret and it is not encrypted: an avatar is the one thing in a chat account
+                    meant to be seen by people you have not written to yet.
+                </p>
+
+                <div class="avatar-row">
+
+                    ${shown !== null
+                        ? html`<img class="avatar large" src="${api.avatarURL(shown)}" alt="Your picture" decoding="async">`
+                        : html`<span class="avatar large initials" aria-hidden="true"><i class="fa-solid fa-user"></i></span>`}
+
+                    <div class="avatar-actions">
+                        <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
+                        <button type="button" id="avatar-pick" class="btn">
+                            <i class="fa-solid fa-image"></i> ${shown !== null ? 'Replace' : 'Choose a picture'}
+                        </button>
+                        ${shown !== null
+                            ? html`<button type="button" id="avatar-remove" class="btn danger">Take it down</button>`
+                            : ''}
+                        <span class="hint">
+                            PNG, JPEG, GIF or WebP, up to 256 KiB. It travels inside a stanza, so
+                            small is the point - a picture the size of a photograph is a picture
+                            every one of your contacts downloads.
+                        </span>
+                        <span id="avatar-error" class="form-error" role="alert"></span>
+                    </div>
+
+                </div>
+
+            </div>
+        `);
+
+        const file   = must<HTMLInputElement>(area, '#avatar-file');
+        const error  = must<HTMLElement>(area, '#avatar-error');
+
+        must<HTMLButtonElement>(area, '#avatar-pick').addEventListener('click', () => file.click());
+
+        file.addEventListener('change', () => {
+
+            const picked = file.files?.[0];
+
+            // The input is cleared before anything else, so picking the same
+            // file again after a failure still fires a change event.
+            file.value = '';
+
+            if (picked === undefined)
+                return;
+
+            error.textContent = 'Publishing …';
+
+            void (async () => {
+                try
+                {
+                    shown = (await api.account.setAvatar(picked)).avatar;
+                    draw();
+                }
+                catch (problem)
+                {
+                    error.textContent = errorMessage(problem);
+                }
+            })();
+
+        });
+
+        area.querySelector<HTMLButtonElement>('#avatar-remove')?.addEventListener('click', () => {
+
+            if (!window.confirm('Take your picture down? Everybody subscribed is told.'))
+                return;
+
+            error.textContent = 'Taking it down …';
+
+            void (async () => {
+                try
+                {
+                    await api.account.removeAvatar();
+                    shown = null;
+                    draw();
+                }
+                catch (problem)
+                {
+                    error.textContent = errorMessage(problem);
+                }
+            })();
+
+        });
+
+    };
+
+    draw();
 
 }
 
