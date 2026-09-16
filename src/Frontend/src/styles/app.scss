@@ -31,6 +31,17 @@ $sidebar-width:     20rem;
     box-sizing: border-box;
 }
 
+// The browser's own rule for [hidden] is `display: none`, and every rule in
+// this file that sets a display beats it - so an element told to hide itself
+// stays on screen. Found by looking at the room view: the composer is hidden
+// when no room is chosen, and `display: flex` two hundred lines down won.
+//
+// Set here rather than in the one place it bit, because the next `hidden` would
+// have the same problem and nothing would say so.
+[hidden] {
+    display: none !important;
+}
+
 html, body {
     margin:       0;
     height:       100%;

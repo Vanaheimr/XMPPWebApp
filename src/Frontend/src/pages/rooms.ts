@@ -178,21 +178,22 @@ class RoomView {
         this.renderHead();
         this.renderOccupants();
 
+        this.updateComposer();
+
         if (jid === null) {
             render(this.messages, html`<p class="empty">Pick a room, or enter one above.</p>`);
-            this.composer.hidden = true;
             return;
         }
-
-        this.composer.hidden = false;
 
         if (store.isRoomLoaded(jid))
             this.renderMessages();
         else {
             render(this.messages, html`<p class="empty">Loading …</p>`);
-            void store.loadRoomMessages(jid).catch((error: unknown) => {
-                render(this.messages, html`<p class="empty">${errorMessage(error)}</p>`);
-            });
+            void store.loadRoomMessages(jid)
+                      .then(()      => this.updateComposer())
+                      .catch((error: unknown) => {
+                          render(this.messages, html`<p class="empty">${errorMessage(error)}</p>`);
+                      });
         }
 
         store.markRoomRead(jid);
@@ -208,6 +209,7 @@ class RoomView {
                 this.renderList();
                 this.renderHead();
                 this.renderOccupants();
+                this.updateComposer();
                 break;
 
             case 'roomMessages':
@@ -231,6 +233,22 @@ class RoomView {
                 break;
 
         }
+
+    }
+
+    /**
+     * There is somewhere to send to, or there is not.
+     *
+     * <b>Not a detail.</b> A box that takes a sentence and drops it is worse
+     * than no box: the two cases it has to cover are a room nobody picked and a
+     * room this app is not in - the second reachable by a bookmark to a room
+     * that was left, which is exactly how it was found.
+     */
+    private updateComposer(): void {
+
+        const room = this.current !== null ? store.rooms.get(this.current) : undefined;
+
+        this.composer.hidden = room === undefined || room.state !== 'joined';
 
     }
 
@@ -485,10 +503,23 @@ class RoomView {
         }
 
         try {
-            const changed = await store.openRoomUp(jid);
-            this.toast('info', changed.cannotEncrypt === null
-                                   ? 'Encrypted from here on.'
-                                   : `Still not encrypted: ${changed.cannotEncrypt}`);
+
+            await store.openRoomUp(jid);
+
+            // What the answer says about the room is a moment old and may be
+            // wrong: the service announces the change in a message of its own
+            // (status 172), which arrives after the configuration was
+            // acknowledged. The banner is fed from that and is the truth; this
+            // only says what was asked for.
+            //
+            // And the second sentence is the one people trip over: a service
+            // need not announce the occupants again, and Prosody does not, so
+            // whoever is already standing here stays nameless until they come
+            // back.
+            this.toast('info',
+                       'The room now shows real addresses. Anybody already here may have to ' +
+                       'leave and come back before they can be encrypted to.');
+
         }
         catch (error) {
             this.toast('error', errorMessage(error));
