@@ -303,6 +303,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/messages",     GetMessages,    HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/messages",     SendMessage,    HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/media/{name}", GetMedia,       HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/chats/{jid}/files",        SendFile,       HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/read",         MarkRead,       HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/encryption",   SetEncryption,  HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/state",        SendChatState,  HTTPMethod.POST);
@@ -782,6 +783,152 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 builder.SetHeaderField("Content-Disposition", "attachment");
 
             return Task.FromResult(builder.WithCommonSecurityHeaders().AsImmutable);
+
+        }
+
+        #endregion
+
+        #region (private) SendFile       (Request)
+
+        /// <summary>
+        /// POST /api/v1/chats/{jid}/files?name=… with the file as the body:
+        /// puts it on the server's upload service and sends the address.
+        /// </summary>
+        /// <remarks>
+        /// <b>The conversation's encryption decides the file's.</b> Somebody who
+        /// turned encryption on for a chat and then sent a photograph in the
+        /// clear would be right to be surprised - so when OMEMO is on for this
+        /// conversation the file goes up under XEP-0454 and the storage host
+        /// holds bytes it cannot read.
+        ///
+        /// What that buys is worth being exact about: the key travels in the URL
+        /// to whoever gets the message, so whoever can read the message can read
+        /// the file. It is the host that is shut out, not the conversation.
+        ///
+        /// The name travels as a query parameter and the bytes as the body,
+        /// rather than as a multipart form. There is one file and one field;
+        /// multipart would be a parser for a shape nothing here needs.
+        /// </remarks>
+        private async Task<HTTPResponse> SendFile(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            var name = Request.QueryString?.GetString("name") ?? "";
+
+            // A name travels into the URL the service hands out, so one carrying
+            // a path separator is a way of writing somewhere else. Refused
+            // rather than repaired: a name that had to be changed is not the
+            // name that was asked for, and the sender should know.
+            if (name.Length == 0 ||
+                name.Contains('/') ||
+                name.Contains('\\') ||
+                name.Contains(".."))
+            {
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, "That is not a usable file name.");
+            }
+
+            var content = Request.HTTPBody;
+
+            if (content is null || content.Length == 0)
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, "There is no file in the request.");
+
+            // Asked before anything is sent, because the service announces its
+            // limit here and nowhere else - and a refusal after the bytes have
+            // crossed the browser is a worse way to learn it.
+            var service = await client.DiscoverUploadServiceAsync();
+
+            if (service is null)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable,
+                                 "This server has no upload service, so a file cannot be sent.");
+
+            if (service.IsTooLarge(content.Length))
+                return ErrorJSON(Request, HTTPStatusCode.RequestEntityTooLarge,
+                                 $"The file is {content.Length} bytes and the service takes " +
+                                 $"{service.MaxFileSize} at most.");
+
+            ChatMessage?  message;
+            String?       refusal;
+
+            try
+            {
+                (message, refusal) = await SendFileToAsync(jid, content, name);
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("Sending a file to {Jid} failed: {Error}", jid, e.Message);
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway,
+                                 $"The file could not be sent: {e.Message}");
+            }
+
+            if (message is null)
+                return ErrorJSON(Request, HTTPStatusCode.Conflict, refusal ?? "The file was not sent.");
+
+            return JSONResponse(
+                       Request,
+                       HTTPStatusCode.Created,
+                       new JObject(new JProperty("message", message.ToJSON()))
+                   );
+
+        }
+
+        #endregion
+
+        #region (internal) SendFileToAsync(Jid, Content, Name)
+
+        /// <summary>
+        /// Uploads a file and puts the line into the conversation.
+        /// </summary>
+        /// <remarks>
+        /// Apart from the route for the same reason <see cref="SendToAsync"/>
+        /// is: the route reads a request and writes a status code, this decides
+        /// what a file is. Keeping them together would mean the interesting half
+        /// could only be exercised through a signed-in browser.
+        /// </remarks>
+        internal async Task<(ChatMessage? Message, String? Refusal)> SendFileToAsync(JID     Jid,
+                                                                                     Byte[]  Content,
+                                                                                     String  Name)
+        {
+
+            if (Client is not { IsConnected: true } client)
+                return (null, NotConnectedText());
+
+            // The conversation decides. Not "encrypt whenever OMEMO is
+            // available" - that would encrypt files in a chat somebody
+            // deliberately left in the clear - and not "never", which would put
+            // a photograph on a server in a conversation somebody deliberately
+            // encrypted.
+            var encrypt = client.OmemoEnabled && Chats.EncryptionOn(Jid);
+
+            using var stream = new MemoryStream(Content);
+
+            var sent = encrypt
+                           ? await client.SendEncryptedFileAsync(Jid, stream, Name)
+                           : await client.SendFileAsync(Jid, stream, Content.LongLength, Name,
+                                                        HttpFileUpload.GuessContentType(Name));
+
+            if (!sent.Sent)
+                return (null,
+                        sent.Upload.Refusal    is not null ? $"The upload service refused it: {sent.Upload.Refusal}"
+                      : sent.Upload.HttpStatus is not null ? $"The upload was refused with HTTP {(Int32) sent.Upload.HttpStatus}."
+                      : "The file was not sent, and the service said nothing either.");
+
+            // The address is the body, which is what XEP-0363 asks for and what
+            // every other client shows. The page turns it back into a picture -
+            // see links.ts - and the archive replaces it with its own copy as
+            // soon as it has one.
+            return (Chats.AddOutgoing(Jid, sent.MessageId!, sent.Url!.AbsoluteUri, DateTimeOffset.UtcNow),
+                    null);
 
         }
 

@@ -297,6 +297,23 @@ export class ChatStore {
 
     }
 
+    /**
+     * XEP-0363: sends a file and puts the line into the conversation.
+     *
+     * The same shape as `send`, because as far as everything downstream is
+     * concerned it is the same thing: a message whose body is an address.
+     */
+    async sendFile(jid: string, file: File): Promise<Message> {
+
+        const result = await api.chats.sendFile(jid, file);
+
+        if (this.applyMessage(jid, result.message))
+            this.emit({ type: 'message', jid, message: result.message });
+
+        return result.message;
+
+    }
+
     markRead(jid: string): void {
 
         const chat = this.chats.get(jid);

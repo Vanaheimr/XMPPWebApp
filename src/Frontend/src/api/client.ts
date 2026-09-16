@@ -308,6 +308,58 @@ async function request<T>(method: string, path: string, body?: unknown, base: st
 
 const jid = (value: string) => encodeURIComponent(value);
 
+
+/**
+ * Posts raw bytes and reads the JSON answer.
+ *
+ * Apart from `request` because the two differ in exactly the thing `request`
+ * takes for granted: there is no JSON to stringify, and the Content-Type is the
+ * file's rather than application/json. Folding that into `request` would mean a
+ * branch in the one function every other call goes through.
+ */
+async function sendBytes<T>(path: string, file: File): Promise<T> {
+
+    const response = await fetch(config.apiBase + path, {
+                               method:       'POST',
+                               // Whatever the browser made of the file, or
+                               // nothing: the server does not believe it either
+                               // way - it works the type out from the name, and
+                               // an upload service is told octet-stream when the
+                               // file is encrypted.
+                               headers:      { 'Accept': 'application/json',
+                                               'Content-Type': file.type.length > 0 ? file.type : 'application/octet-stream' },
+                               credentials:  'same-origin',
+                               body:         file
+                           });
+
+    if (response.status === 401)
+        unauthorizedHandler?.();
+
+    const text = await response.text();
+    let json: unknown = null;
+
+    try {
+        json = text.length > 0 ? JSON.parse(text) : null;
+    }
+    catch {
+        if (response.ok)
+            throw new ApiError(response.status, `Invalid JSON in the response of POST ${path}`, text);
+    }
+
+    if (!response.ok) {
+
+        const message = typeof json === 'object' && json !== null && 'error' in json && typeof json.error === 'string'
+                            ? json.error
+                            : `${response.status} ${response.statusText}`;
+
+        throw new ApiError(response.status, message, json);
+
+    }
+
+    return json as T;
+
+}
+
 export const api = {
 
     /** The Server-Sent Events stream; the browser sends the session cookie along. */
@@ -366,6 +418,16 @@ export const api = {
                        (limit !== undefined ? `&limit=${limit}` : '')
                    ),
         send:      (chat: string, body: string)              => request<{ seq: number; message: Message }>('POST', `/chats/${jid(chat)}/messages`, { body }),
+
+        /**
+         * Sends a file (XEP-0363, and XEP-0454 when the conversation is
+         * encrypted - the server decides that, not this).
+         *
+         * The bytes go as the body and the name as a query parameter, rather
+         * than as a multipart form: there is one file and one field, and
+         * multipart would be a parser for a shape nothing here needs.
+         */
+        sendFile:  (chat: string, file: File)                => sendBytes<{ seq: number; message: Message }>(`/chats/${jid(chat)}/files?name=${encodeURIComponent(file.name)}`, file),
         read:      (chat: string)                            => request<void>                ('POST', `/chats/${jid(chat)}/read`),
         state:     (chat: string, state: ChatState)          => request<void>                ('POST', `/chats/${jid(chat)}/state`, { state }),
         contact:   (chat: string, action: ContactAction)     => request<void>                ('POST', `/chats/${jid(chat)}/contact`, { action }),

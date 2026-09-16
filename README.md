@@ -109,6 +109,16 @@ that talks to it.
   when the upload has expired, an encrypted one is decrypted on the way in,
   and no outside host learns who is reading. What is fetched, and what it may
   be served back as, is narrow on purpose — see [Security notes](#security-notes).
+- **Sending a file.** The paperclip beside the composer puts a file on the
+  server's upload service (XEP-0363) and sends the address, which the page then
+  shows as the picture it is. **The conversation's encryption decides the
+  file's**: in a chat that is encrypted the file goes up under XEP-0454 and the
+  storage host holds bytes it cannot read — anybody who turned encryption on and
+  then sent a photograph in the clear would be right to be surprised. What that
+  buys is exactly this and no more: the key travels in the address to whoever
+  gets the message, so it is the host that is shut out, not the conversation.
+  The limit the service announces is asked for before anything is sent, and a
+  file name that carries a path is refused rather than repaired.
 - **Encrypted messages, both ways.** OMEMO (XEP-0384), and the lock is drawn
   per line rather than per conversation — because a conversation can hold
   both, and a lock over all of it would be wrong for half the lines. **What

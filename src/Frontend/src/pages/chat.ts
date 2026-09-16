@@ -67,6 +67,8 @@ export const chatPage: Page = {
                     <div id="messages" class="messages" aria-live="polite"></div>
 
                     <form id="composer" class="composer">
+                        <input id="file" type="file" hidden>
+                        <button type="button" id="attach" class="btn" title="Send a file"><i class="fa-solid fa-paperclip"></i></button>
                         <textarea name="body" rows="1" placeholder="Write a message …" aria-label="Message"></textarea>
                         <button type="submit" class="btn primary" title="Send (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
                     </form>
@@ -98,6 +100,8 @@ class ChatView {
     private readonly banner:     HTMLElement;
     private readonly messages:   HTMLElement;
     private readonly composer:   HTMLFormElement;
+    private readonly fileInput:  HTMLInputElement;
+    private readonly attach:     HTMLButtonElement;
     private readonly textarea:   HTMLTextAreaElement;
     private readonly sendButton: HTMLButtonElement;
     private readonly toasts:     HTMLElement;
@@ -125,6 +129,8 @@ class ChatView {
         this.banner      = must(element, '#banner');
         this.messages    = must(element, '#messages');
         this.composer    = must<HTMLFormElement>(element, '#composer');
+        this.fileInput   = must<HTMLInputElement>(element, '#file');
+        this.attach      = must<HTMLButtonElement>(element, '#attach');
         this.textarea    = must<HTMLTextAreaElement>(this.composer, 'textarea');
         this.sendButton  = must<HTMLButtonElement>(this.composer, 'button[type="submit"]');
         this.toasts      = must(element, '#toasts');
@@ -155,6 +161,25 @@ class ChatView {
 
             event.preventDefault();
             this.select(anchor.dataset.jid, true);
+
+        });
+
+        // The button and the input are two elements because a styled file
+        // input is not a thing a browser offers: the input stays hidden and the
+        // button opens it.
+        this.attach.addEventListener('click', () => this.fileInput.click());
+
+        this.fileInput.addEventListener('change', () => {
+
+            const file = this.fileInput.files?.[0];
+
+            // Cleared either way, and before anything else: without it the same
+            // file cannot be sent twice, because 'change' does not fire when the
+            // value has not changed.
+            this.fileInput.value = '';
+
+            if (file !== undefined)
+                void this.sendFile(file);
 
         });
 
@@ -785,6 +810,40 @@ class ChatView {
 
 
     // Sending
+
+    /**
+     * XEP-0363: sends a file.
+     *
+     * Whether it travels encrypted is the server's decision and follows the
+     * conversation - see SendFileToAsync. Saying so here would be a second
+     * place to keep the same rule, and the two would drift.
+     */
+    private async sendFile(file: File): Promise<void> {
+
+        const jid = this.current;
+
+        if (jid === null)
+            return;
+
+        this.attach.disabled = true;
+
+        try
+        {
+            await store.sendFile(jid, file);
+            this.atBottom = true;
+            this.scrollToBottom();
+        }
+        catch (error)
+        {
+            this.toast('error', errorMessage(error));
+        }
+        finally
+        {
+            this.attach.disabled = false;
+            this.textarea.focus();
+        }
+
+    }
 
     private async send(): Promise<void> {
 
