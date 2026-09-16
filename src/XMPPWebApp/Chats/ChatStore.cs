@@ -315,7 +315,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                        String?              Corrects   = null,
                                        OmemoIdentityCheck?  Identity   = null,
                                        String?              RepliesTo  = null,
-                                       String?              Quote      = null)
+                                       String?              Quote      = null,
+                                       Boolean              Archived   = false)
         {
             lock (@lock)
             {
@@ -379,8 +380,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
                 Insert(conversation, message);
 
-                conversation.Unread++;
-                conversation.PeerChatState  = null;
+                // XEP-0313: something filled in from an archive is not something
+                // that just arrived. Counting it unread would put a badge on a
+                // conversation for messages somebody read a year ago on another
+                // device - which is the same mistake as letting a result travel
+                // as a message, one layer up and in front of a person.
+                if (!Archived)
+                {
+                    conversation.Unread++;
+                    conversation.PeerChatState = null;
+                }
+
                 conversation.LastActivity   = Max(conversation.LastActivity, Timestamp);
 
                 Changed(conversation);

@@ -468,6 +468,112 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         #endregion
 
 
+        /// <summary>
+        /// How much of the server's archive is taken in when a connection
+        /// comes up.
+        /// </summary>
+        /// <remarks>
+        /// A page and not everything there is. What this is for is the gap
+        /// since the app was last running, not a second copy of the whole
+        /// history - the store keeps a bounded number per conversation anyway,
+        /// and asking for more than it can hold only fills memory to have it
+        /// thrown away again.
+        /// </remarks>
+        private const Int32 ArchiveBackfill = 50;
+
+        #region (private) FillFromArchiveAsync (Client)
+
+        /// <summary>
+        /// XEP-0313: takes what the server kept into the conversation list.
+        /// </summary>
+        /// <remarks>
+        /// <b>What this app keeps on disk is not the only copy any more.</b>
+        /// Until now a conversation held what happened while this process was
+        /// running; anything said to this account on another device, or while
+        /// it was switched off, was simply not here. The server's archive is
+        /// what fills that in - and is the reason a second device is possible
+        /// at all.
+        ///
+        /// Two things make it harmless to run on every connect:
+        ///
+        /// <list type="bullet">
+        ///   <item>the store already refuses a message whose id it has, so
+        ///         filling in twice adds nothing;</item>
+        ///   <item>what comes in this way is marked as archived, so it does not
+        ///         count as unread. Fifty messages somebody read last year on
+        ///         another device must not arrive here as fifty new ones.</item>
+        /// </list>
+        ///
+        /// <b>What the server keeps is the server's decision</b>, not this
+        /// app's: Prosody by default keeps only what was exchanged with
+        /// somebody in the roster, and a server may keep nothing at all. An
+        /// empty answer is therefore not a fault, and neither is a refusal -
+        /// both simply leave what is on disk as the whole of it.
+        /// </remarks>
+        private async Task FillFromArchiveAsync(XMPPClient Client)
+        {
+
+            try
+            {
+
+                var page = await Client.QueryArchiveAsync(max: ArchiveBackfill, before: "");
+
+                if (page is null || page.Empty)
+                    return;
+
+                var me = Client.BareJid;
+
+                foreach (var entry in page.Messages)
+                {
+
+                    var message = entry.Message;
+
+                    if (String.IsNullOrEmpty(message.Text) ||
+                        message.Type is MessageType.GroupChat or MessageType.Error)
+                    {
+                        continue;
+                    }
+
+                    // An archive holds both directions, and which one this is
+                    // decides where it belongs: the conversation is always the
+                    // *other* end, whoever did the talking.
+                    var outgoing = message.From.Bare == me;
+
+                    if (outgoing)
+                        Chats.AddOutgoing(
+                            message.To.Bare,
+                            message.MessageId ?? entry.ArchiveId,
+                            message.Text,
+                            entry.Timestamp
+                        );
+
+                    else
+                        Chats.AddIncoming(
+                            message.FromBareJid,
+                            message.From.ToString(),
+                            message.MessageId ?? entry.ArchiveId,
+                            message.Text,
+                            entry.Timestamp,
+                            Corrects:   message.ReplacesId,
+                            RepliesTo:  message.RepliesTo?.Id,
+                            Quote:      message.Quote,
+                            Archived:   true
+                        );
+
+                }
+
+            }
+            catch (Exception e)
+            {
+                // An archive that will not answer is not a reason to lose the
+                // connection: what is on disk stays the whole of it.
+                logger.LogWarning("The archive could not be read: {Error}", e.Message);
+            }
+
+        }
+
+        #endregion
+
         #region (private) HandleMessage   (Message)
 
         private void HandleMessage(XMPPMessage Message)
@@ -1020,6 +1126,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                 foreach (var pending in Client.PendingSubscriptions)
                     Chats.SetPendingRequest(pending.Bare, true);
+
+                // XEP-0313: what the server kept while this app was not
+                // running, or was running somewhere else. Not awaited - the
+                // connection is up and usable either way, and an archive that
+                // takes its time must not hold up the first message.
+                _ = FillFromArchiveAsync(Client);
 
                 // Not awaited, and it must not be: this runs inside the
                 // connection's own state change, and switching OMEMO on is two
