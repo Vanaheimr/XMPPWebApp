@@ -24,6 +24,7 @@ using Newtonsoft.Json.Linq;
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Chats;
+using org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms;
 
 #endregion
 
@@ -382,6 +383,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Archive?.UseAccount(NewSettings?.BareJID);
             Avatars?.UseAccount(NewSettings?.BareJID);
 
+            // The rooms go with the client. A room is a place one is in while a
+            // connection holds it open - not a list of addresses that survives
+            // being pointed at a different account, the way the conversations
+            // do. Leaving them standing would show somebody rooms they are not
+            // in, under a nickname that is not theirs.
+            Rooms.Clear();
+
             ApplyPlaintextChats(NewSettings?.BareJID);
 
             if (old is not null)
@@ -458,6 +466,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // since the sender is the connection and not the client.
             client.Connection.OnAvatarChanged
                                          += async (timestamp, sender, jid, infos, ct) => { if (Mine(client)) await HandleAvatarChangedAsync(client, jid, infos, ct); };
+
+            // XEP-0045. Every one of these hands the library's own picture of
+            // the room back to the store rather than patching a second copy:
+            // a missed occupant event would otherwise leave somebody in the
+            // list for ever, and in an encrypted room that is not cosmetic -
+            // the count of who can read this would be wrong.
+            client.OnRoomJoined          += (timestamp, sender, room,         ct) => { if (Mine(client)) RoomJoined(client, room);      return Task.CompletedTask; };
+            client.OnRoomLeft            += (timestamp, sender, room, why,    ct) => { if (Mine(client)) Rooms.Left(room.Address);      return Task.CompletedTask; };
+            client.OnOccupantJoined      += (timestamp, sender, room, who, w, ct) => { if (Mine(client)) RoomChanged(client, room);     return Task.CompletedTask; };
+            client.OnOccupantChanged     += (timestamp, sender, room, who, w, ct) => { if (Mine(client)) RoomChanged(client, room);     return Task.CompletedTask; };
+            client.OnOccupantLeft        += (timestamp, sender, room, who, w, ct) => { if (Mine(client)) RoomChanged(client, room);     return Task.CompletedTask; };
+            client.OnOccupantRenamed     += (timestamp, sender, room, o, n, s, ct) => { if (Mine(client)) RoomChanged(client, room);    return Task.CompletedTask; };
+            client.OnRoomSubject         += (timestamp, sender, room, sub, by, ct) => { if (Mine(client)) Rooms.SetSubject(room.Address, sub, by.Resourcepart); return Task.CompletedTask; };
 
             client.OnRosterItemAdded     += (timestamp, sender, item,         ct) => { if (Mine(sender)) { Chats.SetContact(item.BareJid, item.Name, item.Subscription); RestoreAvatar(item.BareJid); } return Task.CompletedTask; };
             client.Roster.OnItemUpdated  += (timestamp, sender, item,         ct) => { if (Mine(client)) Chats.SetContact(item.BareJid, item.Name, item.Subscription); return Task.CompletedTask; };
@@ -595,12 +616,20 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         private void HandleMessage(XMPPMessage Message)
         {
 
-            // Chat states and receipts travel in messages without a body;
-            // they have events of their own. A room is not a conversation
-            // this client knows how to hold.
+            // Chat states and receipts travel in messages without a body; they
+            // have events of their own.
             if (String.IsNullOrEmpty(Message.Body) ||
-                Message.Type is MessageType.GroupChat or MessageType.Error)
+                Message.Type is MessageType.Error)
             {
+                return;
+            }
+
+            // A room goes to the rooms, which are a view of their own and a
+            // store of their own - see RoomStore for why they are not filed as
+            // conversations. Until D126 this line dropped them.
+            if (Message.Type is MessageType.GroupChat)
+            {
+                HandleRoomMessage(Message, Encrypted: false);
                 return;
             }
 
@@ -618,6 +647,64 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 new DateTimeOffset(Message.Timestamp),
                 Delayed:    Message.IsDelayed,
                 Corrects:   Message.ReplacesId,
+                RepliesTo:  Message.RepliesTo?.Id,
+                Quote:      Message.Quote
+            );
+
+        }
+
+        #endregion
+
+        #region (private) RoomJoined / RoomChanged / HandleRoomMessage
+
+        /// <summary>
+        /// XEP-0045: in a room.
+        /// </summary>
+        private void RoomJoined(XMPPClient Client, MucRoom Room)
+            => Rooms.Joined(Room, Client.CannotEncryptInRoom(Room.Address));
+
+        /// <summary>
+        /// Somebody came, went, or was renamed. The whole occupant list is
+        /// taken over again - see <see cref="RoomStore.SetOccupants"/>.
+        /// </summary>
+        private void RoomChanged(XMPPClient Client, MucRoom Room)
+            => Rooms.SetOccupants(Room, Client.CannotEncryptInRoom(Room.Address));
+
+        /// <summary>
+        /// A line said in a room, encrypted or not.
+        /// </summary>
+        /// <remarks>
+        /// <b>The reflection is dropped here and nowhere else.</b> A service
+        /// hands every message to everybody including the sender, so the line
+        /// this app wrote a moment ago comes straight back with the same id. It
+        /// is already in the store, put there on sending - which it has to be
+        /// for an encrypted room, where the reflection cannot be read at all: an
+        /// OMEMO element carries no key for the device that made it.
+        ///
+        /// So one path for both, and the id is what recognises it. A service
+        /// that rewrote ids would show every own line twice; none does, and the
+        /// nickname check below catches that case anyway.
+        /// </remarks>
+        private void HandleRoomMessage(XMPPMessage  Message,
+                                       Boolean      Encrypted)
+        {
+
+            var room = Message.FromBareJid;
+            var nick = Message.From.Resourcepart;
+
+            // No resource means the room itself said something, which is not a
+            // line anybody wrote.
+            if (nick is null || Rooms.Has(room, Message.MessageId))
+                return;
+
+            Rooms.AddIncoming(
+                room,
+                nick,
+                Message.MessageId,
+                Message.Text,
+                new DateTimeOffset(Message.Timestamp),
+                Delayed:    Message.IsDelayed,
+                Encrypted:  Encrypted,
                 RepliesTo:  Message.RepliesTo?.Id,
                 Quote:      Message.Quote
             );
@@ -672,6 +759,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             if (String.IsNullOrEmpty(Message.Body))
                 return;
+
+            // A room, and it goes the room way. Nothing below applies: there is
+            // no carbon of a groupchat message and no "which conversation is
+            // this" to work out - the address is the room, and the nickname on
+            // it is who spoke.
+            if (Message.Type is MessageType.GroupChat)
+            {
+                HandleRoomMessage(Message, Encrypted: true);
+                return;
+            }
 
             var now                = DateTimeOffset.UtcNow;
             var (chat, outgoing)   = EncryptedBelongsTo(Message, Settings?.BareJID);

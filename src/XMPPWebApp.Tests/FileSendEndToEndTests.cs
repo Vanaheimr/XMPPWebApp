@@ -159,6 +159,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// <summary>
         /// The plain case: the file is on the server and the line names it.
         /// </summary>
+        /// <remarks>
+        /// <b>Encryption is turned off for this conversation rather than left to
+        /// chance</b>, and that is the whole difference between this round
+        /// measuring the plain case and it measuring whichever case the timing
+        /// produced. The rule is that the conversation decides - so a round
+        /// about the plain path has to say what the conversation is, or OMEMO
+        /// switching on between the sign-in and the send silently turns it into
+        /// the encrypted path, which over this plaintext test server is the
+        /// refusal the round below pins.
+        ///
+        /// Found by D126, which added enough fixtures to make the race show:
+        /// one full run in three.
+        /// </remarks>
         [Test]
         public async Task AFileGoesUpAndTheConversationSaysWhere()
         {
@@ -166,6 +179,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
             await Until(() => api.Client?.IsConnected == true, "the web app to sign in");
+
+            api.Chats.Open(Alice);
+            api.Chats.SetEncryption(Alice, On: false);
 
             var picture = APicture();
 

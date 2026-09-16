@@ -32,6 +32,7 @@ using org.GraphDefined.Vanaheimr.Hermod.Passkeys;
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Chats;
+using org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms;
 
 #endregion
 
@@ -138,6 +139,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         public PlaintextChats?           PlaintextChats { get; }
 
         /// <summary>
+        /// XEP-0045: the rooms this app is in.
+        /// </summary>
+        /// <remarks>
+        /// Beside <see cref="Chats"/> and never inside it. A room looks like a
+        /// conversation and none of the rules underneath are the same - see
+        /// <see cref="RoomStore"/>, and D116, where Ratatoskr made the same
+        /// split for the same reason.
+        /// </remarks>
+        public RoomStore                 Rooms          { get; }
+
+        /// <summary>
         /// XEP-0084: the faces in the conversation list, or null when there is
         /// nowhere to keep them.
         /// </summary>
@@ -227,6 +239,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             this.AccountFile    = AccountFile;
             this.Chats          = Chats ?? new ChatStore();
+            this.Rooms          = new RoomStore();
             this.Archive        = Archive;
             this.HistoryWindow  = HistoryWindow ?? ChatArchive.DefaultHistoryWindow;
             this.OmemoDirectory = OmemoDirectory;
@@ -258,6 +271,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                   );
 
             this.Chats.OnChatChanged     += (sequence, chat)    => Publish("chat",    sequence, new JObject(new JProperty("chat",    chat.   ToJSON())));
+
+            // Sub-events of their own, and not "chat" with a flag on it: a page
+            // that shows rooms is a different page, and it must not have to
+            // filter every conversation event to find out whether this one is
+            // for it. Nothing is archived - see RoomStore.
+            this.Rooms.OnRoomChanged     += (sequence, room)    => Publish("room",        sequence, new JObject(new JProperty("room",    room.   ToJSON())));
+            this.Rooms.OnRoomMessage     += (sequence, message) => Publish("roomMessage", sequence, new JObject(new JProperty("message", message.ToJSON())));
 
             // Into the archive first, then to the browsers: both are a handover
             // that returns at once - a queue and a fire-and-forget - and of the
@@ -338,6 +358,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/state",        SendChatState,  HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/contact",      Contact,        HTTPMethod.POST);
 
+            // XEP-0045. Their own branch of the API, because they are their own
+            // view: nothing below /rooms is a conversation and nothing below
+            // /chats is a room.
+            AddHandler(HTTPPath.Root + "v1/rooms",                    ListRooms,      HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/rooms",                    JoinRoom,       HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/rooms/{jid}",              LeaveRoom,      HTTPMethod.DELETE);
+            AddHandler(HTTPPath.Root + "v1/rooms/{jid}/messages",     GetRoomMessages, HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/rooms/{jid}/messages",     SendRoomMessage, HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/rooms/{jid}/read",         MarkRoomRead,   HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/rooms/{jid}/subject",      SetRoomSubject, HTTPMethod.POST);
+            AddHandler(HTTPPath.Root + "v1/rooms/{jid}/encryption",   OpenRoomUp,     HTTPMethod.POST);
+
             AddHandler(HTTPMethod.GET,
                        HTTPPath.Root + "v1/events",
                        HTTPContentType.Text.EVENTSTREAM,
@@ -382,6 +414,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                new JProperty("contacts",          Client?.Roster.Items.Count ?? 0),
                                new JProperty("chats",             Chats.Count),
                                new JProperty("unread",            Chats.Unread),
+
+                               // Counted apart, like everything else about
+                               // rooms: adding them into "unread" would make
+                               // the number on the chat page wrong.
+                               new JProperty("rooms",             Rooms.Count),
+                               new JProperty("roomsUnread",       Rooms.Unread),
                                new JProperty("sessions",          Sessions.Count),
                                new JProperty("seq",               Chats.Sequence)
                            )
@@ -812,6 +850,379 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 builder.SetHeaderField("Content-Disposition", "attachment");
 
             return Task.FromResult(builder.WithCommonSecurityHeaders().AsImmutable);
+
+        }
+
+        #endregion
+
+        #region (private) The rooms (XEP-0045)
+
+        /// <summary>
+        /// GET /api/v1/rooms: the rooms this app is in.
+        /// </summary>
+        private Task<HTTPResponse> ListRooms(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            var sequence = Rooms.Snapshot(out var rooms);
+
+            return Task.FromResult(
+                       JSONResponse(
+                           Request,
+                           HTTPStatusCode.OK,
+                           new JObject(
+                               new JProperty("seq",    sequence),
+                               new JProperty("rooms",  new JArray(rooms.Select(room => room.ToJSON())))
+                           )
+                       )
+                   );
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/rooms with <c>{ jid, nick }</c>: enters a room.
+        /// </summary>
+        /// <remarks>
+        /// <b>A room that does not exist comes into being by this</b>, and comes
+        /// into being <i>locked</i> until its owner configures it (section
+        /// 10.1.2) - so an owner's join is followed by the empty submit that
+        /// unlocks it. Without that, somebody creates a room nobody else can
+        /// enter and no error anywhere says so.
+        ///
+        /// The refusal is an answer and not a failure: a nickname already taken,
+        /// a members-only room, a ban. It goes back with the status the
+        /// condition earns, and the room stays in the list carrying the reason.
+        /// </remarks>
+        private async Task<HTTPResponse> JoinRoom(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (!Request.TryParseJSONObjectRequestBody(out var json, out var wrong))
+                return wrong;
+
+            if (!TryParseChatJID(json["jid"]?.Value<String>(), out var jid, out var error))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            var nick = json["nick"]?.Value<String>()?.Trim() is { Length: > 0 } wanted
+                           ? wanted
+                           : client.BareJid.Localpart ?? "me";
+
+            // A nickname is the resource of the address the room writes somebody
+            // under, so one carrying a '/' names a different room entirely.
+            if (nick.Contains('/') || nick.Contains('@'))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest,
+                                 "A nickname cannot contain '/' or '@'.");
+
+            Rooms.Joining(jid, nick);
+
+            MucJoinOutcome outcome;
+
+            try
+            {
+                outcome = await client.JoinRoomAsync(jid, nick);
+            }
+            catch (Exception e)
+            {
+                Rooms.Refused(jid, e.Message);
+                logger.LogWarning("Entering {Room} failed: {Error}", jid, e.Message);
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"The room could not be entered: {e.Message}");
+            }
+
+            if (!outcome.Joined)
+            {
+
+                var why = outcome.TimedOut
+                              ? "The room never answered."
+                              : $"The service refused: {outcome.Refusal?.Condition ?? "unknown"}.";
+
+                Rooms.Refused(jid, why);
+
+                return ErrorJSON(Request,
+                                 outcome.TimedOut ? HTTPStatusCode.GatewayTimeout : HTTPStatusCode.Conflict,
+                                 why);
+
+            }
+
+            // A room this join brought into being is locked until it is
+            // configured, and nobody else can enter in the meantime.
+            if (outcome.Room!.WasCreated && !await client.CreateInstantRoomAsync(jid))
+                logger.LogWarning("{Room} was created and stayed locked: nobody else can enter it", jid);
+
+            RoomJoined(client, outcome.Room);
+
+            Rooms.TrySnapshot(jid, out var sequence, out var summary, out _);
+
+            return JSONResponse(
+                       Request,
+                       HTTPStatusCode.Created,
+                       new JObject(
+                           new JProperty("seq",   sequence),
+                           new JProperty("room",  summary?.ToJSON())
+                       )
+                   );
+
+        }
+
+        /// <summary>
+        /// DELETE /api/v1/rooms/{jid}: leaves a room.
+        /// </summary>
+        private async Task<HTTPResponse> LeaveRoom(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+
+            if (Client is { IsConnected: true } client)
+                await client.LeaveRoomAsync(jid);
+
+            // Out of the list either way. A room this app is not connected to is
+            // one it is not in, whatever the service still thinks.
+            Rooms.Left(jid);
+
+            return NoContent(Request);
+
+        }
+
+        /// <summary>
+        /// GET /api/v1/rooms/{jid}/messages: what has been said in it.
+        /// </summary>
+        /// <remarks>
+        /// What this app has seen since it started, and no more. Rooms are not
+        /// archived here - a room keeps its history on the server (XEP-0313),
+        /// which is the one place it belongs, because somebody joining later
+        /// gets it from there too.
+        /// </remarks>
+        private Task<HTTPResponse> GetRoomMessages(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
+
+            if (!Rooms.TrySnapshot(jid, out var sequence, out var summary, out var messages))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.NotFound, "This app is not in that room."));
+
+            return Task.FromResult(
+                       JSONResponse(
+                           Request,
+                           HTTPStatusCode.OK,
+                           new JObject(
+                               new JProperty("seq",       sequence),
+                               new JProperty("room",      summary!.ToJSON()),
+                               new JProperty("messages",  new JArray(messages.Select(m => m.ToJSON())))
+                           )
+                       )
+                   );
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/rooms/{jid}/messages with <c>{ body }</c>: says
+        /// something in a room.
+        /// </summary>
+        /// <remarks>
+        /// <b>Encrypted when the room can carry it, in the clear when it
+        /// cannot</b>, and the line says which of the two it was - the same rule
+        /// a conversation follows, with a different thing deciding it. A chat is
+        /// encrypted when the far end has a device that can read it; a room can
+        /// be encrypted in only when it names its occupants, because one
+        /// encrypts to real addresses (D125).
+        ///
+        /// A refusal from the encrypted path is <b>not</b> quietly retried in
+        /// the clear. It means somebody present could not have read it, and
+        /// sending anyway behind the writer's back is the mistake this whole
+        /// lane exists to avoid.
+        /// </remarks>
+        private async Task<HTTPResponse> SendRoomMessage(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+
+            if (!Request.TryParseJSONObjectRequestBody(out var json, out var wrong))
+                return wrong;
+
+            var body = json["body"]?.Value<String>();
+
+            if (String.IsNullOrWhiteSpace(body))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, "There is nothing to say.");
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            if (client.Room(jid) is null)
+                return ErrorJSON(Request, HTTPStatusCode.NotFound, "This app is not in that room.");
+
+            var canEncrypt  = client.OmemoEnabled && client.CannotEncryptInRoom(jid) is null;
+            var now         = DateTimeOffset.UtcNow;
+
+            try
+            {
+
+                if (canEncrypt)
+                {
+
+                    var sent = await client.SendEncryptedRoomMessageAsync(jid, body);
+
+                    if (!sent.Sent)
+                        return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                         sent.Refusal ?? "The message was not sent.");
+
+                    return JSONResponse(
+                               Request,
+                               HTTPStatusCode.Created,
+                               new JObject(new JProperty("message",
+                                                         Rooms.AddOutgoing(jid, sent.MessageId!, body, now, true).ToJSON()))
+                           );
+
+                }
+
+                var messageId = await client.SendRoomMessageAsync(jid, body);
+
+                return JSONResponse(
+                           Request,
+                           HTTPStatusCode.Created,
+                           new JObject(new JProperty("message",
+                                                     Rooms.AddOutgoing(jid, messageId, body, now, false).ToJSON()))
+                       );
+
+            }
+            catch (Exception e)
+            {
+                logger.LogWarning("Saying something in {Room} failed: {Error}", jid, e.Message);
+                return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"It could not be sent: {e.Message}");
+            }
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/rooms/{jid}/read: nobody has to look at it again.
+        /// </summary>
+        private Task<HTTPResponse> MarkRoomRead(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return Task.FromResult(refused);
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
+
+            Rooms.MarkRead(jid);
+
+            return Task.FromResult(NoContent(Request));
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/rooms/{jid}/subject with <c>{ subject }</c>.
+        /// </summary>
+        private async Task<HTTPResponse> SetRoomSubject(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+
+            if (!Request.TryParseJSONObjectRequestBody(out var json, out var wrong))
+                return wrong;
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            // An empty subject is a subject: it is how one is removed.
+            var subject = json["subject"]?.Value<String>() ?? "";
+
+            return await client.SetRoomSubjectAsync(jid, subject)
+                       ? NoContent(Request)
+                       : ErrorJSON(Request, HTTPStatusCode.Forbidden,
+                                   "The service would not change the subject. A room may allow only " +
+                                   "its moderators to.");
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/rooms/{jid}/encryption: makes the room one that can be
+        /// written in encrypted (XEP-0045 section 10.2.1, and D125).
+        /// </summary>
+        /// <remarks>
+        /// <b>It changes what the room is, for everybody in it.</b> From then on
+        /// every occupant can see who every other occupant really is - which is
+        /// the price of being able to encrypt to them, and is why the page asks
+        /// before calling this rather than offering it as a lock to flip.
+        ///
+        /// And it helps only the people who come in afterwards: a service need
+        /// not send the occupants again, and Prosody does not, so whoever is
+        /// already standing in the room stays nameless until they say something.
+        /// The answer carries the room so the page can show that straight away
+        /// rather than leaving somebody to wonder why the lock is still shut.
+        /// </remarks>
+        private async Task<HTTPResponse> OpenRoomUp(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return unauthorized;
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return refused;
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, error);
+
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            if (client.Room(jid) is not MucRoom room)
+                return ErrorJSON(Request, HTTPStatusCode.NotFound, "This app is not in that room.");
+
+            if (!await client.MakeRoomNonAnonymousAsync(jid))
+                return ErrorJSON(Request, HTTPStatusCode.Forbidden,
+                                 "The service would not do it. Only an owner may configure a room, " +
+                                 "and not every service offers the setting.");
+
+            RoomChanged(client, room);
+
+            Rooms.TrySnapshot(jid, out var sequence, out var summary, out _);
+
+            return JSONResponse(
+                       Request,
+                       HTTPStatusCode.OK,
+                       new JObject(
+                           new JProperty("seq",   sequence),
+                           new JProperty("room",  summary?.ToJSON())
+                       )
+                   );
 
         }
 

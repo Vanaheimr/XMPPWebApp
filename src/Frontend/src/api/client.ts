@@ -190,6 +190,79 @@ export interface Chat {
     avatar:          string | null;
 }
 
+/** XEP-0045: where a room stands from this app's side. */
+export type RoomState = 'joining' | 'joined' | 'refused' | 'left';
+
+/** Somebody in a room. */
+export interface Occupant {
+    nick:         string;
+    affiliation:  'outcast' | 'none' | 'member' | 'admin' | 'owner';
+    role:         'none' | 'visitor' | 'participant' | 'moderator';
+    /**
+     * Their real address, or null — **null is the normal case.** A room is
+     * semi-anonymous unless configured otherwise, and then only its moderators
+     * are told who anybody is. It is also exactly what decides whether the room
+     * can be encrypted in.
+     */
+    jid:          string | null;
+    self:         boolean;
+}
+
+/** One line said in a room. */
+export interface RoomMessage {
+    id:         string;
+    room:       string;
+    /** Who said it — their name in the room, which is all everybody present shares. */
+    nick:       string;
+    mine:       boolean;
+    body:       string;
+    timestamp:  string;
+    /** Held on the way, or out of the room's history on entering. */
+    delayed:    boolean;
+    encrypted:  boolean;
+    repliesTo:  string | null;
+    quote:      string | null;
+}
+
+/** A room as the list in the room view shows it. */
+export interface Room {
+    jid:            string;
+    displayName:    string;
+    /** What this app is called in there. */
+    nick:           string;
+    state:          RoomState;
+    subject:        string | null;
+    subjectBy:      string | null;
+    nonAnonymous:   boolean;
+    /** Whether this app may configure it. */
+    owner:          boolean;
+    /**
+     * Why nothing in this room can be encrypted, or null when it can.
+     *
+     * The reason and not a boolean: a lock that is greyed out and says nothing
+     * tells somebody encryption is impossible, when it is usually one setting
+     * away.
+     */
+    cannotEncrypt:  string | null;
+    occupants:      Occupant[];
+    unread:         number;
+    lastMessage:    RoomMessage | null;
+    lastActivity:   string | null;
+    /** Why the service would not let us in, or null. */
+    refusal:        string | null;
+}
+
+export interface RoomList {
+    seq:    number;
+    rooms:  Room[];
+}
+
+export interface RoomMessages {
+    seq:       number;
+    room:      Room;
+    messages:  RoomMessage[];
+}
+
 /** The XMPP connection of the web app. */
 export interface Connection {
     state:             ConnectionState;
@@ -472,6 +545,36 @@ export const api = {
 
         /** XEP-0384: turn encryption off for this conversation, or back on. */
         encryption: (chat: string, enabled: boolean)         => request<{ seq: number; encryption: 'auto' | 'off' }>('POST', `/chats/${jid(chat)}/encryption`, { enabled })
+    },
+
+    /**
+     * XEP-0045. A branch of its own, because rooms are a view of their own:
+     * nothing under `/rooms` is a conversation and nothing under `/chats` is a
+     * room.
+     */
+    rooms: {
+        list:      ()                                => request<RoomList>    ('GET',    '/rooms'),
+        join:      (room: string, nick?: string)     => request<{ seq: number; room: Room }>('POST', '/rooms', { jid: room, nick }),
+        leave:     (room: string)                    => request<void>        ('DELETE', `/rooms/${jid(room)}`),
+        messages:  (room: string)                    => request<RoomMessages>('GET',    `/rooms/${jid(room)}/messages`),
+
+        /**
+         * Says something. Encrypted when the room can carry it and in the clear
+         * when it cannot — the server decides that, not this, and the line that
+         * comes back says which of the two it was.
+         */
+        send:      (room: string, body: string)      => request<{ message: RoomMessage }>('POST', `/rooms/${jid(room)}/messages`, { body }),
+        read:      (room: string)                    => request<void>        ('POST',   `/rooms/${jid(room)}/read`),
+        subject:   (room: string, subject: string)   => request<void>        ('POST',   `/rooms/${jid(room)}/subject`, { subject }),
+
+        /**
+         * Makes the room one that can be written in encrypted (section 10.2.1).
+         *
+         * **It changes the room for everybody in it** — from then on every
+         * occupant can see who every other occupant really is. Ask before
+         * calling it.
+         */
+        openUp:    (room: string)                    => request<{ seq: number; room: Room }>('POST', `/rooms/${jid(room)}/encryption`)
     }
 
 };

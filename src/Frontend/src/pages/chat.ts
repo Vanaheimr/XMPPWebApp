@@ -41,6 +41,9 @@ export const chatPage: Page = {
                             <div id="me-jid" class="me-jid" title="The XMPP account of this web app"></div>
                             <div id="me-state" class="me-state"></div>
                         </div>
+                        <a href="/rooms" class="btn small" title="Rooms (XEP-0045)">
+                            <i class="fa-solid fa-hashtag"></i>
+                        </a>
                         <a href="/account" class="btn small" title="XMPP account settings">
                             <i class="fa-solid fa-gear"></i>
                         </a>

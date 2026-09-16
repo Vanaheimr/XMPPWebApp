@@ -278,6 +278,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             var events   = await browser.GetAsync("api/v1/events");
             var media    = await browser.GetAsync("api/v1/chats/alice@example.org/media/20260914T120000Z_x.png");
             var avatar   = await browser.GetAsync("api/v1/avatars/da39a3ee5e6b4b0d3255bfef95601890afd80709");
+            var rooms    = await browser.GetAsync("api/v1/rooms");
+            var said     = await browser.GetAsync("api/v1/rooms/chat@conference.example.org/messages");
 
             Assert.Multiple(() =>
             {
@@ -291,6 +293,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 // an open route would answer "is this picture one of yours" for
                 // any id anybody cared to try.
                 Assert.That(avatar. StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "whose face is in whose roster is the roster");
+
+                // XEP-0045. Which rooms this account is in, and what is said in
+                // them, is as much the account's business as its conversations -
+                // and a room is often the more private of the two, because it
+                // names other people.
+                Assert.That(rooms.  StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized), "which rooms this account is in is nobody else's business");
+                Assert.That(said.   StatusCode,  Is.EqualTo(HttpStatusCode.Unauthorized));
             });
 
         }

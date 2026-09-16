@@ -831,9 +831,142 @@ input, textarea, select {
 
 // Narrow screens: either the list or the conversation
 
+// XEP-0045: the room view
+//
+// The same shell as the chat with a third column, and the third column is the
+// whole reason this is a page of its own: a conversation has one far end and a
+// room has a list of people, under names that mean nothing outside it.
+
+.chat.rooms {
+    grid-template-columns:  $sidebar-width 1fr 14rem;
+}
+
+.occupants {
+
+    display:         flex;
+    flex-direction:  column;
+    min-height:      0;
+    overflow-y:      auto;
+    background:      $color-surface;
+    border-left:     1px solid $color-border;
+
+    .occupants-head {
+        margin:         0;
+        padding:        0.75rem 0.9rem 0.5rem;
+        font-size:      0.75rem;
+        font-weight:    700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color:          $color-muted;
+    }
+
+    .occupants-list {
+        margin:      0;
+        padding:     0 0 0.75rem;
+        list-style:  none;
+    }
+
+}
+
+.occupant {
+
+    display:                grid;
+    grid-template-columns:  1.25rem 1fr;
+    column-gap:             0.5rem;
+    row-gap:                0.05rem;
+    padding:                0.3rem 0.9rem;
+    align-items:            center;
+
+    &.self .occupant-nick {
+        font-weight: 700;
+    }
+
+    .occupant-role {
+        grid-row:   1 / span 2;
+        color:      $color-muted;
+        font-size:  0.8rem;
+
+        &.moderator {
+            color: $color-accent;
+        }
+    }
+
+    .occupant-nick {
+        font-size:      0.9rem;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+    }
+
+    // The real address, and its absence is worth seeing: it is exactly what
+    // decides whether the room can be encrypted in.
+    .occupant-jid {
+        grid-column:    2;
+        font-size:      0.7rem;
+        color:          $color-muted;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+        white-space:    nowrap;
+    }
+
+}
+
+.room-item {
+
+    .room-mark {
+        grid-row:   1 / span 2;
+        width:      1.1rem;
+        text-align: center;
+        color:      $color-muted;
+
+        &.refused {
+            color: $color-error;
+        }
+
+        &.joining {
+            color: $color-warn;
+        }
+    }
+
+}
+
+// A line in a room carries the nickname, which a conversation has no place for.
+.rooms .message .meta .nick {
+    font-weight:   600;
+    margin-right:  0.4rem;
+}
+
+.rooms .message.delayed .meta {
+    font-style: italic;
+}
+
+.banner .notice.small {
+    margin:     0.5rem 1rem;
+    font-size:  0.85rem;
+}
+
+
+@media (max-width: 1100px) {
+
+    // The occupant list is the first thing to go: who is in the room is worth
+    // knowing and worth less than being able to read it.
+    .chat.rooms {
+        grid-template-columns: $sidebar-width 1fr;
+    }
+
+    .occupants {
+        display: none;
+    }
+
+}
+
 @media (max-width: 720px) {
 
     .chat {
+        grid-template-columns: 1fr;
+    }
+
+    .chat.rooms {
         grid-template-columns: 1fr;
     }
 

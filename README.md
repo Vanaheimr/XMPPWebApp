@@ -34,11 +34,12 @@ that talks to it.
 > machine this runs on is the trust boundary. The server's archive is read when
 > a connection comes up (XEP-0313) and filled in behind what is on disk, which
 > is what makes a second device see anything at all; asking it for older pages
-> on demand is not here yet. There are no rooms
-> (XEP-0045: the protocol is in Ratatoskr, the conversation list, the archive
-> and the screen here are built for two people talking), and one account with
-> one login is the whole model. A web client for the person who runs it; not a
-> service for other people.
+> on demand is not here yet. Rooms are here since D126 and live in a **view of
+> their own** (XEP-0045) — the conversation list, the archive and that screen
+> are built for two people talking, and a room is not that; what a room holds
+> is not archived here either, because it lives on the server where whoever
+> joins later gets it too. One account with one login is the whole model. A web
+> client for the person who runs it; not a service for other people.
 
 ---
 
@@ -89,6 +90,21 @@ that talks to it.
   messages from your other devices (XEP-0280), and late deliveries where they
   were written (XEP-0203). Enter sends, Shift+Enter
   breaks the line; the far end sees when you type (XEP-0085).
+- **Rooms, in a view of their own** (XEP-0045, at `/rooms`). A room looks like
+  a conversation and **none of the rules underneath are the same**, which is why
+  it is a page and a store of its own rather than a mode of the chat: who is
+  there is a list rather than a state, nobody in it is a contact, a delivery
+  receipt would be answered by everybody present, and whether it can be
+  encrypted is a property of the room rather than of the far end. So there is a
+  third column for the occupants — with each person's real address, or a dash
+  where the room will not say, which is exactly what decides the next point.
+  **Encrypted when the room can carry it**, in the clear when it cannot, and the
+  banner says which and why: one encrypts to the devices of a real address, so a
+  semi-anonymous room — every service's default — cannot carry it. An owner can
+  change that from the header, and is asked first, because it makes everybody in
+  the room visible to everybody else. Entering a room that does not exist
+  creates it, and unlocks it, which is a step that is easy to miss and leaves a
+  room only its creator can enter.
 - **Pictures inline.** A message that is nothing but one `https://` URL ending
   in `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif` or `.bmp` is shown as
   the picture it points to, linked to the original. That is how a client hands

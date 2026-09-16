@@ -1,4 +1,5 @@
-import { api, type Chat, type ChatState, type Connection, type ContactAction, type Message } from '../api/client';
+import { api, type Chat, type ChatState, type Connection, type ContactAction, type Message,
+         type Room, type RoomMessage } from '../api/client';
 
 // The browser's copy of the conversations, fed by two things: snapshots from
 // the JSON API and the Server-Sent Events stream. Both carry sequence numbers
@@ -15,6 +16,9 @@ export type StoreEvent =
     | { type: 'chats' }
     | { type: 'messages'; jid: string }
     | { type: 'message';  jid: string; message: Message }
+    | { type: 'rooms' }
+    | { type: 'roomMessages'; jid: string }
+    | { type: 'roomMessage';  jid: string; message: RoomMessage }
     | { type: 'connection' }
     | { type: 'notice';   level: 'info' | 'warning' | 'error'; text: string }
     | { type: 'stream' };
@@ -23,6 +27,8 @@ type Listener = (event: StoreEvent) => void;
 
 interface ChatData        { seq: number; chat: Chat }
 interface MessageData     { seq: number; message: Message }
+interface RoomData        { seq: number; room: Room }
+interface RoomMessageData { seq: number; message: RoomMessage }
 interface ConnectionData  { seq: number; previous: string; connection: Connection }
 interface NoticeData      { seq: number; level: string; text: string; timestamp: string }
 
@@ -37,6 +43,19 @@ export class ChatStore {
 
     readonly chats     = new Map<string, Chat>();
     readonly messages  = new Map<string, Message[]>();
+
+    /**
+     * XEP-0045, and kept apart from the conversations above on purpose — the
+     * same split the server makes, and for the same reason: a room looks like a
+     * conversation and none of the rules underneath are the same.
+     *
+     * What is *not* split is the event stream. One connection carries both, and
+     * has to: a second EventSource would be a second session's worth of work on
+     * the server for the same account, and the room page and the chat page are
+     * never open at once anyway.
+     */
+    readonly rooms         = new Map<string, Room>();
+    readonly roomMessages  = new Map<string, RoomMessage[]>();
 
     /** Per chat: whether the archive holds anything older than what is loaded. */
     private readonly more = new Map<string, boolean>();
@@ -117,10 +136,12 @@ export class ChatStore {
             }
         });
 
-        source.addEventListener('chat',       event => this.onChat      (parse<ChatData>       (event)));
-        source.addEventListener('message',    event => this.onMessage   (parse<MessageData>    (event)));
-        source.addEventListener('connection', event => this.onConnection(parse<ConnectionData> (event)));
-        source.addEventListener('notice',     event => this.onNotice    (parse<NoticeData>     (event)));
+        source.addEventListener('chat',        event => this.onChat       (parse<ChatData>        (event)));
+        source.addEventListener('message',     event => this.onMessage    (parse<MessageData>     (event)));
+        source.addEventListener('room',        event => this.onRoom       (parse<RoomData>        (event)));
+        source.addEventListener('roomMessage', event => this.onRoomMessage(parse<RoomMessageData> (event)));
+        source.addEventListener('connection',  event => this.onConnection (parse<ConnectionData>  (event)));
+        source.addEventListener('notice',      event => this.onNotice     (parse<NoticeData>      (event)));
 
     }
 
@@ -139,6 +160,113 @@ export class ChatStore {
         this.messages.clear();
         this.chatSeq.clear();
         this.more.clear();
+
+        this.rooms.clear();
+        this.roomMessages.clear();
+
+    }
+
+
+    // XEP-0045: the rooms. Everything below is the room half and touches
+    // nothing above it.
+
+    /** The rooms for the list: the most recently active first. */
+    sortedRooms(): Room[] {
+
+        return Array.from(this.rooms.values()).sort((a, b) =>
+            Date.parse(b.lastActivity ?? '1970-01-01') - Date.parse(a.lastActivity ?? '1970-01-01') ||
+            a.displayName.localeCompare(b.displayName));
+
+    }
+
+    async loadRooms(): Promise<void> {
+
+        const list = await api.rooms.list();
+
+        this.rooms.clear();
+
+        for (const room of list.rooms)
+            this.rooms.set(room.jid, room);
+
+        this.emit({ type: 'rooms' });
+
+    }
+
+    async loadRoomMessages(jid: string): Promise<void> {
+
+        const result = await api.rooms.messages(jid);
+
+        this.roomMessages.set(jid, result.messages);
+        this.rooms.set(jid, result.room);
+
+        this.emit({ type: 'roomMessages', jid });
+        this.emit({ type: 'rooms' });
+
+    }
+
+    /** Whether the lines of this room have been loaded. */
+    isRoomLoaded(jid: string): boolean {
+        return this.roomMessages.has(jid);
+    }
+
+    async joinRoom(jid: string, nick?: string): Promise<Room> {
+
+        const result = await api.rooms.join(jid, nick);
+
+        this.rooms.set(result.room.jid, result.room);
+        this.emit({ type: 'rooms' });
+
+        return result.room;
+
+    }
+
+    async leaveRoom(jid: string): Promise<void> {
+
+        await api.rooms.leave(jid);
+
+        this.rooms.delete(jid);
+        this.roomMessages.delete(jid);
+
+        this.emit({ type: 'rooms' });
+
+    }
+
+    async sendToRoom(jid: string, body: string): Promise<RoomMessage> {
+
+        const result = await api.rooms.send(jid, body);
+
+        // The room will hand it back as well; it is recognised by its id there
+        // and on the server, so this only makes it appear at once.
+        if (this.applyRoomMessage(jid, result.message))
+            this.emit({ type: 'roomMessage', jid, message: result.message });
+
+        return result.message;
+
+    }
+
+    async openRoomUp(jid: string): Promise<Room> {
+
+        const result = await api.rooms.openUp(jid);
+
+        this.rooms.set(result.room.jid, result.room);
+        this.emit({ type: 'rooms' });
+
+        return result.room;
+
+    }
+
+    async setRoomSubject(jid: string, subject: string): Promise<void> {
+        await api.rooms.subject(jid, subject);
+    }
+
+    markRoomRead(jid: string): void {
+
+        const room = this.rooms.get(jid);
+
+        if (room === undefined || room.unread === 0)
+            return;
+
+        api.rooms.read(jid).catch((error: unknown) => console.debug('Could not mark the room as read:', error));
 
     }
 
@@ -365,6 +493,56 @@ export class ChatStore {
 
         if (this.applyMessage(jid, event.message))
             this.emit({ type: 'message', jid, message: event.message });
+
+    }
+
+    private onRoom(event: RoomData): void {
+
+        // 'left' is the one state that never stands in the list: it is the
+        // event saying the row is gone.
+        if (event.room.state === 'left') {
+            this.rooms.delete(event.room.jid);
+            this.roomMessages.delete(event.room.jid);
+        }
+        else
+            this.rooms.set(event.room.jid, event.room);
+
+        this.emit({ type: 'rooms' });
+
+    }
+
+    private onRoomMessage(event: RoomMessageData): void {
+
+        const jid = event.message.room;
+
+        if (this.applyRoomMessage(jid, event.message))
+            this.emit({ type: 'roomMessage', jid, message: event.message });
+
+    }
+
+    /** Put a line into a loaded room; false when the room is not loaded. */
+    private applyRoomMessage(jid: string, message: RoomMessage): boolean {
+
+        const list = this.roomMessages.get(jid);
+
+        if (list === undefined)
+            return false;
+
+        const index = list.findIndex(existing => existing.id === message.id);
+
+        if (index >= 0) {
+            list[index] = message;
+            return true;
+        }
+
+        let position = list.length;
+
+        while (position > 0 && Date.parse(list[position - 1].timestamp) > Date.parse(message.timestamp))
+            position--;
+
+        list.splice(position, 0, message);
+
+        return true;
 
     }
 

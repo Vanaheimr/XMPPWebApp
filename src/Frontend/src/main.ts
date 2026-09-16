@@ -17,6 +17,7 @@ import { accountPage }  from './pages/account';
 import { chatPage }     from './pages/chat';
 import { loginPage }    from './pages/login';
 import { notFoundPage } from './pages/notFound';
+import { roomsPage }    from './pages/rooms';
 
 
 const root = document.getElementById('app');
@@ -33,6 +34,13 @@ const router = new Router({
     routes: [
         { path: '/',            page: chatPage,     guard: auth.requireSignIn },
         { path: '/chats/:jid',  page: chatPage,     guard: auth.requireSignIn },
+
+        // XEP-0045: a view of its own, not a mode of the chat page. A room
+        // looks like a conversation and none of the rules underneath are the
+        // same - see pages/rooms.ts.
+        { path: '/rooms',       page: roomsPage,    guard: auth.requireSignIn },
+        { path: '/rooms/:jid',  page: roomsPage,    guard: auth.requireSignIn },
+
         { path: '/account',     page: accountPage,  guard: auth.requireSignIn },
         { path: '/login',       page: loginPage }
     ],
