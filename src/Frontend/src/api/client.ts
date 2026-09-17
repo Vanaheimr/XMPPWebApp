@@ -222,6 +222,14 @@ export interface RoomMessage {
     encrypted:  boolean;
     repliesTo:  string | null;
     quote:      string | null;
+    /**
+     * XEP-0045, section 7.5: said to this account alone, inside the room.
+     *
+     * Shown as a line in the room because that is where it was said, and marked
+     * because **the composer answers the room**. This app can read a private
+     * word and cannot yet send one, and an unmarked line would make that a trap.
+     */
+    private:    boolean;
 }
 
 /** A room as the list in the room view shows it. */

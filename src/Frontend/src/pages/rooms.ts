@@ -405,11 +405,14 @@ class RoomView {
 
             return html`
                 ${day}
-                <div class="message ${message.mine ? 'out' : 'in'} ${message.delayed ? 'delayed' : ''}" data-id="${message.id}">
+                <div class="message ${message.mine ? 'out' : 'in'} ${message.delayed ? 'delayed' : ''} ${message.private ? 'private' : ''}" data-id="${message.id}">
                     <div class="meta">
                         <span class="nick">${message.nick}</span>
                         <span class="time">${formatTime(message.timestamp)}</span>
                         ${message.encrypted ? html`<i class="fa-solid fa-lock" title="This line travelled encrypted"></i>` : ''}
+                        ${message.private
+                              ? html`<span class="only-you" title="Said to you alone (XEP-0045, 7.5). The box below answers the room, not the person.">only you</span>`
+                              : ''}
                     </div>
                     <div class="body-slot" data-body="${message.id}"></div>
                 </div>

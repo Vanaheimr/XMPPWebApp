@@ -951,6 +951,21 @@ input, textarea, select {
     font-style: italic;
 }
 
+// XEP-0045, section 7.5. Marked and not merely styled differently: the box
+// below the conversation answers the ROOM, so a private line that looked like
+// any other is an invitation to say out loud what was told in confidence.
+.rooms .message.private {
+    border-left:  3px solid var(--accent, #7a5af8);
+    padding-left: 0.6rem;
+}
+
+.rooms .message.private .only-you {
+    font-size:      0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color:          var(--accent, #7a5af8);
+}
+
 .banner .notice.small {
     margin:     0.5rem 1rem;
     font-size:  0.85rem;

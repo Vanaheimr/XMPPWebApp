@@ -658,6 +658,24 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return;
             }
 
+            // XEP-0045, section 7.5: said to us alone, inside a room - and it
+            // belongs to the room, because that is where it was said.
+            //
+            // Filed as a chat it opened a conversation keyed by the room's
+            // bare address, because the chat store bares every key it is
+            // given; and whoever typed into that conversation addressed
+            // room@service, which reaches nobody at all on the two services
+            // measured in D134 and everybody on one that treats it as a shout.
+            //
+            // Nothing here could tell a private word from a chat with a
+            // contact until D134 - both are a <chat/> from a full address - so
+            // this app was right by not having the case. It has it now.
+            if (Message.IsRoomPrivate)
+            {
+                HandleRoomMessage(Message, Encrypted: false, Private: true);
+                return;
+            }
+
             // XEP-0461: Text and not Body. An answer carries the text it
             // answers a second time, as "> " lines, for clients that cannot
             // follow the reference - and putting both into the archive files the
@@ -711,7 +729,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// nickname check below catches that case anyway.
         /// </remarks>
         private void HandleRoomMessage(XMPPMessage  Message,
-                                       Boolean      Encrypted)
+                                       Boolean      Encrypted,
+                                       Boolean      Private = false)
         {
 
             var room = Message.FromBareJid;
@@ -731,7 +750,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 Delayed:    Message.IsDelayed,
                 Encrypted:  Encrypted,
                 RepliesTo:  Message.RepliesTo?.Id,
-                Quote:      Message.Quote
+                Quote:      Message.Quote,
+                Private:    Private
             );
 
         }

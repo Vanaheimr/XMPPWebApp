@@ -420,7 +420,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                        Boolean         Delayed    = false,
                                        Boolean         Encrypted  = false,
                                        String?         RepliesTo  = null,
-                                       String?         Quote      = null)
+                                       String?         Quote      = null,
+                                       Boolean         Private    = false)
         {
             lock (@lock)
             {
@@ -437,7 +438,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                    Delayed,
                                    Encrypted,
                                    RepliesTo,
-                                   Quote
+                                   Quote,
+                                   Private
                                );
 
                 Insert(room, message);

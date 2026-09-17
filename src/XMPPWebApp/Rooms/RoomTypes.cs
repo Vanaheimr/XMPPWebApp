@@ -111,6 +111,22 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
     /// for: in a room somebody speaks from their place in it, and that place is
     /// all that everybody present shares.
     /// </remarks>
+    /// <param name="Private">
+    /// XEP-0045, section 7.5: said to us alone, inside the room.
+    /// </param>
+    /// <remarks>
+    /// <b>A private word belongs to the room and not to the chat list</b>, and
+    /// that is not a filing preference. Until D134 it arrived here as an
+    /// ordinary chat, opened a conversation keyed by the room's bare address -
+    /// the store bares every key - and whoever typed into that conversation
+    /// addressed <c>room@service</c>: nobody at all on the two services
+    /// measured, everybody on one that treats it as a shout.
+    ///
+    /// It is shown as a line in the room because that is where it was said, and
+    /// marked because answering in the room answers <i>the room</i>. This app
+    /// can read a private word and cannot yet send one; the mark is what keeps
+    /// that from being a trap.
+    /// </remarks>
     public sealed record RoomMessage(String          Id,
                                      JID             Room,
                                      String          Nick,
@@ -120,7 +136,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                      Boolean         Delayed,
                                      Boolean         Encrypted,
                                      String?         RepliesTo,
-                                     String?         Quote)
+                                     String?         Quote,
+                                     Boolean         Private   = false)
     {
 
         public JObject ToJSON()
@@ -135,7 +152,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                    new JProperty("delayed",    Delayed),
                    new JProperty("encrypted",  Encrypted),
                    new JProperty("repliesTo",  RepliesTo),
-                   new JProperty("quote",      Quote)
+                   new JProperty("quote",      Quote),
+                   new JProperty("private",    Private)
                );
 
     }

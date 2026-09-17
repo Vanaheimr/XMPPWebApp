@@ -452,6 +452,61 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region APrivateWordIsFiledUnderThePersonAndNotTheRoom()
+
+        /// <summary>
+        /// XEP-0045, section 7.5: where a private word goes, and what answering
+        /// it would reach.
+        /// </summary>
+        /// <remarks>
+        /// <b>The conversation key is the address an answer is sent to.</b> A
+        /// private message arrives from <c>room@service/nick</c>, and filed
+        /// under its bare address it opens a conversation with the room - so
+        /// whoever types into it addresses <c>room@service</c>. On the two
+        /// services measured in D134 that reaches nobody at all; on one that
+        /// treats it as a shout it reaches everybody. Neither is what somebody
+        /// answering a private word meant.
+        ///
+        /// Nothing here could tell the two apart until D134 - both are a
+        /// <c>chat</c> from a full address - so this app was right by not having
+        /// the case. It has it now.
+        /// </remarks>
+        [Test]
+        public async Task APrivateWordIsFiledUnderThePersonAndNotTheRoom()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='chat' id='pm-1'>" +
+                    "<body>for you alone</body>" +
+                    "<x xmlns='http://jabber.org/protocol/muc#user'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "for you alone"),
+                        "the private word to be filed as a line in the room");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(Lines().First(line => line.Body == "for you alone").Private, Is.True,
+                            "It stands in the room unmarked, and the box below the conversation " +
+                            "answers the room - so reading it as an ordinary line is an " +
+                            "invitation to say out loud what was told in confidence.");
+
+                api!.Chats.Snapshot(out var filed);
+
+                Assert.That(filed.Any(chat => chat.Jid.ToString() == RoomJid.ToString()), Is.False,
+                            "A conversation was opened with the room itself, so answering it " +
+                            "addresses room@service - which is either nobody or everybody, and " +
+                            "never the person who said it.");
+
+            });
+
+        }
+
+        #endregion
+
     }
 
 }
