@@ -151,6 +151,22 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         public Boolean  Corrected    { get; init; }
 
         /// <summary>
+        /// XEP-0424: whether the sender took this line back.
+        /// </summary>
+        /// <remarks>
+        /// <b>The line keeps its place and loses its text.</b> Removing it
+        /// outright would reshuffle a conversation under somebody who is
+        /// reading it, and answers to it would come to point at nothing;
+        /// keeping the text would defeat the request entirely. So the place
+        /// stays, the words go, and the mark says which of the two happened.
+        ///
+        /// It is the request honoured and not a deletion carried out: the
+        /// archive keeps its own copy, and whoever was reading when it
+        /// arrived has already read it.
+        /// </remarks>
+        public Boolean  Retracted    { get; init; }
+
+        /// <summary>
         /// Whether the far end confirmed the delivery (XEP-0184) or the
         /// reception (XEP-0333) of a sent message.
         /// </summary>
@@ -221,6 +237,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                    new JProperty("carbon",     Carbon),
                    new JProperty("corrects",   Corrects),
                    new JProperty("corrected",  Corrected),
+                   new JProperty("retracted",  Retracted),
                    new JProperty("delivered",  Delivered),
                    new JProperty("displayed",  Displayed),
                    new JProperty("encrypted",  Encrypted),

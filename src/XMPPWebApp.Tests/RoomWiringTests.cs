@@ -621,6 +621,123 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ARetractedLineLosesItsWordsAndKeepsItsPlace()
+
+        /// <summary>
+        /// XEP-0424 in a room: the line is emptied, not removed.
+        /// </summary>
+        /// <remarks>
+        /// <b>Removing it outright would reshuffle the room under somebody who
+        /// is reading it</b>, and an answer pointing at it would come to point
+        /// at nothing. Keeping the words would defeat the request entirely. So
+        /// the place stays, the words go, and the mark says which of the two
+        /// happened.
+        ///
+        /// The retraction names the name the <i>room</i> gave the line and not
+        /// the id on the stanza - the one thing XEP-0424 says outright about
+        /// group chats - which is why the store carries both.
+        /// </remarks>
+        [Test]
+        public async Task ARetractedLineLosesItsWordsAndKeepsItsPlace()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='said-1'>" +
+                    "<body>something better left unsaid</body>" +
+                    $"<stanza-id xmlns='urn:xmpp:sid:0' id='room-42' by='{RoomJid}'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "something better left unsaid"),
+                        "the line");
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='retract-1'>" +
+                    "<retract id='room-42' xmlns='urn:xmpp:message-retract:1'/>" +
+                    "<fallback xmlns='urn:xmpp:fallback:0' for='urn:xmpp:message-retract:1'/>" +
+                    "<body>A previous message was retracted.</body>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Retracted), "the retraction");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(Lines(), Has.Count.EqualTo(1),
+                            "The retraction was filed as a line of its own, so the fallback " +
+                            "sentence stands in the room as though somebody had typed it - " +
+                            "beside the line it was supposed to take back.");
+
+                Assert.That(Lines()[0].Body, Is.Empty,
+                            "The words are still there, so the retraction did nothing but add a " +
+                            "mark to them.");
+
+                Assert.That(Lines()[0].Nick, Is.EqualTo("alice"),
+                            "The emptied line lost whose it was.");
+
+            });
+
+        }
+
+        #endregion
+
+        #region NobodyTakesBackSomebodyElsesLine()
+
+        /// <summary>
+        /// XEP-0424: whose line a retraction may empty.
+        /// </summary>
+        /// <remarks>
+        /// <blockquote>a retraction ... MUST only be processed when both the
+        /// original message and the retraction request are received from the
+        /// same bare-JID (in a one-on-one conversation) or full-JID (in a
+        /// non-anonymous MUC).</blockquote>
+        ///
+        /// The same rule as XEP-0308's and a worse failure without it: a
+        /// correction under somebody else's name puts words in their mouth, and
+        /// this takes their words away. Both leave the line carrying the name of
+        /// somebody who did not do it.
+        /// </remarks>
+        [Test]
+        public async Task NobodyTakesBackSomebodyElsesLine()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='hers-1'>" +
+                    "<body>what Alice said</body>" +
+                    $"<stanza-id xmlns='urn:xmpp:sid:0' id='room-7' by='{RoomJid}'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "what Alice said"), "her line");
+
+            // Bob names the room's name for her line.
+            await session.SendAsync(
+                $"<message from='{RoomJid}/bob' to='{api!.Client!.FullJid}' type='groupchat' id='his-1'>" +
+                    "<retract id='room-7' xmlns='urn:xmpp:message-retract:1'/>" +
+                    "<body>A previous message was retracted.</body>" +
+                "</message>");
+
+            // Something has to have happened before the absence below means
+            // anything, so a line of Bob's own follows and is waited for.
+            await session.SendAsync(
+                $"<message from='{RoomJid}/bob' to='{api!.Client!.FullJid}' type='groupchat' id='his-2'>" +
+                    "<body>and then Bob said this</body>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "and then Bob said this"),
+                        "a line after the attempt");
+
+            Assert.That(Lines().First(line => line.Nick == "alice").Body,
+                        Is.EqualTo("what Alice said"),
+                        "Somebody else emptied her line by naming its id, and it still carries " +
+                        "her name.");
+
+        }
+
+        #endregion
+
     }
 
 }

@@ -114,6 +114,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
     /// <param name="Private">
     /// XEP-0045, section 7.5: said to us alone, inside the room.
     /// </param>
+    /// <param name="Retracted">
+    /// XEP-0424: whether the sender took this line back. The line keeps its
+    /// place and loses its text - removing it outright would reshuffle the
+    /// room under somebody reading it, and keeping the text would defeat the
+    /// request.
+    /// </param>
+    /// <param name="RetractableId">
+    /// XEP-0424: the name this line can be taken back under. <b>In a room
+    /// that is the one the room gave it</b> and not the id on the stanza, so
+    /// it has to be carried - a client retracting by the wrong one names,
+    /// for every other reader, a line that is not the one it meant.
+    /// </param>
     /// <remarks>
     /// <b>A private word belongs to the room and not to the chat list</b>, and
     /// that is not a filing preference. Until D134 it arrived here as an
@@ -137,8 +149,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                      Boolean         Encrypted,
                                      String?         RepliesTo,
                                      String?         Quote,
-                                     Boolean         Private   = false,
-                                     Boolean         Corrected = false)
+                                     Boolean         Private       = false,
+                                     Boolean         Corrected     = false,
+                                     Boolean         Retracted     = false,
+                                     String?         RetractableId = null)
     {
 
         public JObject ToJSON()
@@ -155,7 +169,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                    new JProperty("repliesTo",  RepliesTo),
                    new JProperty("quote",      Quote),
                    new JProperty("private",    Private),
-                   new JProperty("corrected",  Corrected)
+                   new JProperty("corrected",  Corrected),
+                   new JProperty("retracted",  Retracted)
                );
 
     }

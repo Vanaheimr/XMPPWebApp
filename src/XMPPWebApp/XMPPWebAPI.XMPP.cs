@@ -649,6 +649,27 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return;
             }
 
+            // XEP-0424: somebody took something back. Before the branches
+            // below, because a retraction carries a body - the fallback
+            // sentence for clients that cannot do this - and filing that as a
+            // message would put the sentence on screen as though somebody had
+            // typed it, beside the line it was supposed to take back.
+            if (Message.RetractsId is String taken)
+            {
+
+                if (Message.Type is MessageType.GroupChat &&
+                    Message.From.Resourcepart is String who)
+                {
+                    Rooms.Retract(Message.FromBareJid, who, taken);
+                }
+
+                else
+                    Chats.Retract(Message.FromBareJid, taken, Incoming: true);
+
+                return;
+
+            }
+
             // A room goes to the rooms, which are a view of their own and a
             // store of their own - see RoomStore for why they are not filed as
             // conversations. Until D126 this line dropped them.
@@ -752,7 +773,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 RepliesTo:  Message.RepliesTo?.Id,
                 Quote:      Message.Quote,
                 Private:    Private,
-                Corrects:   Message.ReplacesId
+                Corrects:   Message.ReplacesId,
+
+                // XEP-0424: the name the room gave it, which is not the id on
+                // the stanza and is the only one a retraction may use here.
+                RetractableId: Message.RetractableId
             );
 
         }

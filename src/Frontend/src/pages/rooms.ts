@@ -72,6 +72,8 @@ export const roomsPage: Page = {
 
                     <form id="composer" class="composer">
                         <textarea name="body" rows="1" placeholder="Say something …" aria-label="Message"></textarea>
+                        <button type="button" id="unsay" class="btn small danger" hidden
+                                title="XEP-0424: take this line back. A request and not a deletion - the other side decides what to do with it, and the archive keeps its own copy.">take back</button>
                         <button type="submit" class="btn primary" title="Send (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
                     </form>
 
@@ -105,6 +107,7 @@ class RoomView {
     private readonly occupants:  HTMLElement;
     private readonly composer:   HTMLFormElement;
     private readonly textarea:   HTMLTextAreaElement;
+    private readonly unsay:      HTMLButtonElement;
     private readonly toasts:     HTMLElement;
 
     private readonly unsubscribe: () => void;
@@ -113,7 +116,8 @@ class RoomView {
     private drawn:    string | null = null;
 
     /** XEP-0308: whether the box holds a line being said again properly. */
-    private editing:  boolean = false;
+    /** XEP-0308/0424: the id of the line in the box, or null when it is new. */
+    private editing:  string | null = null;
 
     constructor(private readonly root: HTMLElement) {
 
@@ -125,6 +129,7 @@ class RoomView {
         this.occupants  = must<HTMLElement>(root, '#occupants');
         this.composer   = must<HTMLFormElement>(root, '#composer');
         this.textarea   = must<HTMLTextAreaElement>(this.composer, 'textarea');
+        this.unsay      = must<HTMLButtonElement>(this.composer, '#unsay');
         this.toasts     = must<HTMLElement>(root, '#toasts');
 
         this.unsubscribe = store.onChange(event => this.onStore(event));
@@ -133,6 +138,8 @@ class RoomView {
             event.preventDefault();
             void this.join(new FormData(event.target as HTMLFormElement).get('jid') as string);
         });
+
+        this.unsay.addEventListener('click', () => { void this.takeBack(); });
 
         this.composer.addEventListener('submit', event => {
             event.preventDefault();
@@ -158,8 +165,9 @@ class RoomView {
                 if (mine !== null) {
                     event.preventDefault();
                     this.textarea.value  = mine.body;
-                    this.editing         = true;
+                    this.editing         = mine.id;
                     this.composer.classList.add('editing');
+                    this.unsay.hidden    = false;
                 }
 
                 return;
@@ -445,6 +453,9 @@ class RoomView {
                         ${message.corrected
                               ? html`<span class="edited" title="XEP-0308: this line was corrected after it was said">edited</span>`
                               : ''}
+                        ${message.retracted
+                              ? html`<span class="taken-back" title="XEP-0424: the sender took this back. The archive may still hold it.">taken back</span>`
+                              : ''}
                     </div>
                     <div class="body-slot" data-body="${message.id}"></div>
                 </div>
@@ -571,7 +582,7 @@ class RoomView {
         const lines = store.roomMessages.get(this.current) ?? [];
 
         for (let i = lines.length - 1; i >= 0; i--)
-            if (lines[i].mine)
+            if (lines[i].mine && !lines[i].retracted)
                 return lines[i];
 
         return null;
@@ -579,16 +590,43 @@ class RoomView {
     }
 
     private stopEditing(): void {
-        this.editing         = false;
+        this.editing         = null;
         this.textarea.value  = '';
         this.composer.classList.remove('editing');
+        this.unsay.hidden    = true;
+    }
+
+    /**
+     * XEP-0424: takes the line being edited back instead of saying it again.
+     *
+     * A request and not a deletion, which is why it is a button and not a
+     * keystroke: what the far side does with it is theirs to decide, the
+     * archive keeps its own copy, and whoever was reading has already read.
+     */
+    private async takeBack(): Promise<void> {
+
+        const jid  = this.current;
+        const id   = this.editing;
+
+        if (jid === null || id === null)
+            return;
+
+        this.stopEditing();
+
+        try {
+            await store.retractInRoom(jid, id);
+        }
+        catch (error) {
+            this.toast('error', errorMessage(error));
+        }
+
     }
 
     private async send(): Promise<void> {
 
         const jid       = this.current;
         const body      = this.textarea.value.trim();
-        const editing   = this.editing;
+        const editing   = this.editing !== null;
 
         if (jid === null || body.length === 0)
             return;

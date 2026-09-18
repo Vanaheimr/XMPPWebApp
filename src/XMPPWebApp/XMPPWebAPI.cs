@@ -1066,6 +1066,27 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (!Request.TryParseJSONObjectRequestBody(out var json, out var wrong))
                 return wrong;
 
+            // XEP-0424 in a room. The name is the one the room gave the line,
+            // which the store carries beside the id on the stanza - a
+            // retraction by the wrong one names, for every other reader, a
+            // line that is not the one that was meant.
+            if (json.Value<String>("retracts") is String retracts && retracts.Length > 0)
+            {
+
+                if (!Rooms.TrySnapshot(jid, out _, out var here, out _) || here is null)
+                    return ErrorJSON(Request, HTTPStatusCode.NotFound, "Not in that room.");
+
+                if (Rooms.Retract(jid, here.Nick, retracts) is not RoomMessage taken)
+                    return ErrorJSON(Request, HTTPStatusCode.NotFound,
+                                     "There is no line of ours by that name in this room. A " +
+                                     "retraction may only take back what this account said.");
+
+                await Client!.RetractMessageAsync(jid.Bare, retracts, MessageType.GroupChat);
+
+                return JSONResponse(Request, HTTPStatusCode.OK, taken.ToJSON());
+
+            }
+
             var body = json["body"]?.Value<String>();
 
             if (String.IsNullOrWhiteSpace(body))
@@ -1633,6 +1654,24 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             if (!TryParseJSONObject(Request, out var json, out var errorResponse))
                 return errorResponse;
+
+            // XEP-0424: "retracts": "<id>" takes that line back. Before the
+            // body is looked at, because a retraction has none of its own -
+            // what goes on the wire is a fallback sentence this app writes,
+            // not something anybody typed.
+            if (json.Value<String>("retracts") is String retracts && retracts.Length > 0)
+            {
+
+                if (Chats.Retract(jid, retracts, Incoming: false) is not ChatMessage taken)
+                    return ErrorJSON(Request, HTTPStatusCode.NotFound,
+                                     "There is no line of ours by that name here. A retraction " +
+                                     "may only take back what this account said.");
+
+                await Client!.RetractMessageAsync(jid, retracts);
+
+                return JSONResponse(Request, HTTPStatusCode.OK, taken.ToJSON());
+
+            }
 
             var body = XmlText.Sanitize((json.Value<String>("body") ?? "").TrimEnd());
 

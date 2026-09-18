@@ -965,6 +965,8 @@ input, textarea, select {
     border-color: var(--accent, #7a5af8);
 }
 
+// XEP-0424: the words are gone and the place is not.
+.rooms .message .taken-back,
 .rooms .message .edited,
 .rooms .message.private .only-you {
     font-size:      0.75rem;

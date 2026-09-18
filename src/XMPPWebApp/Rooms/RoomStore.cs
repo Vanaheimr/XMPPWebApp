@@ -424,6 +424,52 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
         /// to the occupant who wrote the line, and in a room that is all there
         /// is to go by.
         /// </remarks>
+        /// <summary>
+        /// XEP-0424: takes back a line in a room, on its author's request.
+        /// </summary>
+        /// <remarks>
+        /// <b>Only that occupant's own line.</b> XEP-0424 has a retraction
+        /// processed only when it and the message come from the same
+        /// address, and in a room that is the full one - the room plus the
+        /// nickname. Without the comparison anybody standing there could
+        /// empty anybody else's words by naming their id, and the line would
+        /// keep the name of the person who never took it back.
+        ///
+        /// The name looked for is the one the room gave, which is why a
+        /// line carries it (<c>RetractableId</c>) beside the id on its
+        /// stanza.
+        /// </remarks>
+        public RoomMessage? Retract(JID     Jid,
+                                    String  Nick,
+                                    String  RetractedId)
+        {
+            lock (@lock)
+            {
+
+                if (!rooms.TryGetValue(Jid.Bare, out var room))
+                    return null;
+
+                var index = room.Messages.FindIndex(line => line.RetractableId == RetractedId &&
+                                                            line.Nick          == Nick);
+
+                if (index < 0)
+                    return null;
+
+                var taken = room.Messages[index] with {
+                                Body       = "",
+                                Retracted  = true
+                            };
+
+                room.Messages[index] = taken;
+
+                sequence++;
+                OnRoomMessage?.Invoke(sequence, taken);
+
+                return taken;
+
+            }
+        }
+
         public RoomMessage? CorrectLastOwn(JID     Jid,
                                            String  MessageId,
                                            String  Body)
@@ -465,7 +511,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                        String?         RepliesTo  = null,
                                        String?         Quote      = null,
                                        Boolean         Private    = false,
-                                       String?         Corrects   = null)
+                                       String?         Corrects   = null,
+                                       String?         RetractableId = null)
         {
             lock (@lock)
             {
@@ -529,7 +576,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                    RepliesTo,
                                    Quote,
                                    Private,
-                                   Corrected: false
+                                   Corrected:      false,
+                                   Retracted:      false,
+                                   RetractableId:  RetractableId
                                );
 
                 Insert(room, message);

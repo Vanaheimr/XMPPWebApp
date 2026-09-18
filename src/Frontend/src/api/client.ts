@@ -125,6 +125,14 @@ export interface Message {
      * the only copy of what is being answered.
      */
     quote:      string | null;
+    /**
+     * XEP-0424: the sender took this line back.
+     *
+     * The line keeps its place and has lost its text. Removing it outright
+     * would reshuffle the conversation under whoever is reading it; keeping
+     * the words would defeat the request.
+     */
+    retracted:  boolean;
     corrected:  boolean;
     delivered:  boolean;
     displayed:  boolean;
@@ -232,6 +240,14 @@ export interface RoomMessage {
     private:    boolean;
     /** XEP-0308: whether this line has been replaced by a correction. */
     corrected:  boolean;
+    /**
+     * XEP-0424: the sender took this line back.
+     *
+     * The line keeps its place and has lost its text. Removing it outright
+     * would reshuffle the conversation under whoever is reading it; keeping
+     * the words would defeat the request.
+     */
+    retracted:  boolean;
 }
 
 /** A room as the list in the room view shows it. */
@@ -546,6 +562,8 @@ export const api = {
          * out in the clear, and it carries the text that was encrypted.
          */
         correct:   (chat: string, body: string)              => request<Message>('POST', `/chats/${jid(chat)}/messages`, { body, corrects: true }),
+        /** XEP-0424: takes a line back. A request and not a deletion. */
+        retract:   (chat: string, id: string)                => request<Message>('POST', `/chats/${jid(chat)}/messages`, { retracts: id }),
 
         /**
          * Sends a file (XEP-0363, and XEP-0454 when the conversation is
@@ -583,6 +601,8 @@ export const api = {
         send:      (room: string, body: string)      => request<{ message: RoomMessage }>('POST', `/rooms/${jid(room)}/messages`, { body }),
         /** XEP-0308: replaces the last line this app said in the room. */
         correct:   (room: string, body: string)      => request<RoomMessage>('POST', `/rooms/${jid(room)}/messages`, { body, corrects: true }),
+        /** XEP-0424: takes a line back, by the name the room gave it. */
+        retract:   (room: string, id: string)        => request<RoomMessage>('POST', `/rooms/${jid(room)}/messages`, { retracts: id }),
         read:      (room: string)                    => request<void>        ('POST',   `/rooms/${jid(room)}/read`),
         subject:   (room: string, subject: string)   => request<void>        ('POST',   `/rooms/${jid(room)}/subject`, { subject }),
 

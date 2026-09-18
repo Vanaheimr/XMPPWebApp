@@ -429,6 +429,58 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// what a further correction has to name. Whoever mistypes also
         /// mistypes in the correction.
         /// </remarks>
+        /// <summary>
+        /// XEP-0424: takes back a line, on the far end's request.
+        /// </summary>
+        /// <returns>
+        /// The emptied line, or null when there is none by that name from
+        /// that direction.
+        /// </returns>
+        /// <remarks>
+        /// <b>Only a line that came from the same side.</b> XEP-0424 has a
+        /// retraction processed only when it and the message come from the
+        /// same address, and in a conversation the conversation is that
+        /// address - so the direction is the whole comparison here, exactly
+        /// as it is for a correction.
+        ///
+        /// The words go and the place stays. What arrives afterwards still
+        /// comes after it, and an answer pointing at it still points at
+        /// something.
+        /// </remarks>
+        public ChatMessage? Retract(JID      Chat,
+                                    String   RetractedId,
+                                    Boolean  Incoming)
+        {
+            lock (@lock)
+            {
+
+                if (!chats.TryGetValue(Chat.Bare, out var conversation))
+                    return null;
+
+                var wanted = Incoming
+                                 ? MessageDirection.Incoming
+                                 : MessageDirection.Outgoing;
+
+                var index = conversation.Messages.FindIndex(
+                                message => message.Id        == RetractedId &&
+                                           message.Direction == wanted);
+
+                if (index < 0)
+                    return null;
+
+                var taken = conversation.Messages[index] with {
+                                Body       = "",
+                                Retracted  = true
+                            };
+
+                conversation.Messages[index] = taken;
+
+                Changed(conversation);
+                return Changed(taken);
+
+            }
+        }
+
         public ChatMessage? CorrectLastOutgoing(JID     Chat,
                                                 String  MessageId,
                                                 String  Body)

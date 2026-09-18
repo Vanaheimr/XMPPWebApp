@@ -249,6 +249,18 @@ export class ChatStore {
 
     }
 
+    /** XEP-0424: takes back a line this app said in a room. */
+    async retractInRoom(jid: string, id: string): Promise<RoomMessage> {
+
+        const taken = await api.rooms.retract(jid, id);
+
+        this.applyRoomMessage(jid, taken);
+        this.emit({ type: 'roomMessage', jid, message: taken });
+
+        return taken;
+
+    }
+
     async sendToRoom(jid: string, body: string): Promise<RoomMessage> {
 
         const result = await api.rooms.send(jid, body);
@@ -446,6 +458,18 @@ export class ChatStore {
         this.emit({ type: 'message', jid, message: corrected });
 
         return corrected;
+
+    }
+
+    /** XEP-0424: takes back a line this app sent. */
+    async retract(jid: string, id: string): Promise<Message> {
+
+        const taken = await api.chats.retract(jid, id);
+
+        this.applyMessage(jid, taken);
+        this.emit({ type: 'message', jid, message: taken });
+
+        return taken;
 
     }
 

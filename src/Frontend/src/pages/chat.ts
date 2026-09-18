@@ -73,6 +73,8 @@ export const chatPage: Page = {
                         <input id="file" type="file" hidden>
                         <button type="button" id="attach" class="btn" title="Send a file"><i class="fa-solid fa-paperclip"></i></button>
                         <textarea name="body" rows="1" placeholder="Write a message …" aria-label="Message"></textarea>
+                        <button type="button" id="unsay" class="btn small danger" hidden
+                                title="XEP-0424: take this line back. A request and not a deletion - the other side decides what to do with it, and the archive keeps its own copy.">take back</button>
                         <button type="submit" class="btn primary" title="Send (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
                     </form>
 
@@ -107,12 +109,13 @@ class ChatView {
     private readonly attach:     HTMLButtonElement;
     private readonly textarea:   HTMLTextAreaElement;
     private readonly sendButton: HTMLButtonElement;
+    private readonly unsay:      HTMLButtonElement;
     private readonly toasts:     HTMLElement;
 
     private current:     string | null = null;
 
-    /** XEP-0308: whether the box holds a line being said again properly. */
-    private editing:     boolean = false;
+    /** XEP-0308/0424: the id of the line in the box, or null when it is new. */
+    private editing:     string | null = null;
     private elements     = new Map<string, HTMLElement>();
     private lastRendered: Message | null = null;
     private atBottom     = true;
@@ -139,6 +142,9 @@ class ChatView {
         this.attach      = must<HTMLButtonElement>(element, '#attach');
         this.textarea    = must<HTMLTextAreaElement>(this.composer, 'textarea');
         this.sendButton  = must<HTMLButtonElement>(this.composer, 'button[type="submit"]');
+        this.unsay       = must<HTMLButtonElement>(this.composer, '#unsay');
+
+        this.unsay.addEventListener('click', () => { void this.takeBack(); });
         this.toasts      = must(element, '#toasts');
 
         this.unsubscribe = store.onChange(event => this.onStoreEvent(event));
@@ -212,8 +218,9 @@ class ChatView {
                 if (mine !== null) {
                     event.preventDefault();
                     this.textarea.value = mine.body;
-                    this.editing        = true;
+                    this.editing        = mine.id;
                     this.composer.classList.add('editing');
+                    this.unsay.hidden   = false;
                     this.autosize();
                 }
 
@@ -809,6 +816,11 @@ class ChatView {
         if (message.corrected)
             parts.push('edited');
 
+        // XEP-0424: the words are gone and the place is not. Said rather than
+        // left to an empty line, which would read as a message that failed.
+        if (message.retracted)
+            parts.push('taken back');
+
         // Per message, because that is where it is true. This app reads
         // encrypted and sends in the clear, so a lock on the conversation would
         // be wrong for half of the lines in it.
@@ -887,7 +899,7 @@ class ChatView {
         const lines = store.messages.get(this.current) ?? [];
 
         for (let i = lines.length - 1; i >= 0; i--)
-            if (lines[i].direction === 'out')
+            if (lines[i].direction === 'out' && !lines[i].retracted)
                 return lines[i];
 
         return null;
@@ -895,17 +907,44 @@ class ChatView {
     }
 
     private stopEditing(): void {
-        this.editing        = false;
+        this.editing        = null;
         this.textarea.value = '';
         this.composer.classList.remove('editing');
+        this.unsay.hidden   = true;
         this.autosize();
+    }
+
+    /**
+     * XEP-0424: takes the line being edited back instead of saying it again.
+     *
+     * A request and not a deletion, which is why it is a button and not a
+     * keystroke: what the far side does with it is theirs to decide, the
+     * archive keeps its own copy, and whoever was reading has already read.
+     */
+    private async takeBack(): Promise<void> {
+
+        const jid  = this.current;
+        const id   = this.editing;
+
+        if (jid === null || id === null)
+            return;
+
+        this.stopEditing();
+
+        try {
+            await store.retract(jid, id);
+        }
+        catch (error) {
+            this.toast('error', errorMessage(error));
+        }
+
     }
 
     private async send(): Promise<void> {
 
         const jid      = this.current;
         const body     = this.textarea.value.trimEnd();
-        const editing  = this.editing;
+        const editing  = this.editing !== null;
 
         if (jid === null || body.trim().length === 0)
             return;
