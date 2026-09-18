@@ -582,12 +582,17 @@ is decisions rather than defects.
   through (DNS rebinding). Run with `--no-media` where that matters.
 - **A stored file comes back out of this program's own origin**, which is a
   security decision and not a convenience: a file the browser treats as a
-  document would be script running as this page. So only image, video and
-  audio types are stored at all — `image/svg+xml` is *not* among them, an SVG
-  being a document with scripts in it — the file is given the extension of the
-  type the server announced when its name disagrees, and what is served is
-  read off that extension with `nosniff`, never guessed from the content.
+  document would be script running as this page. So image, video and audio
+  types are stored — `image/svg+xml` is *not* among them, an SVG being a
+  document with scripts in it — the file is given the extension of the type the
+  server announced when its name disagrees, and what is served is read off that
+  extension with `nosniff`, never guessed from the content.
   Anything whose extension is not on that list is served as a download.
+  **And that last sentence is what lets PDFs be kept since D140** without
+  touching the rule above them: `application/pdf` is on the list of what may be
+  stored and deliberately absent from the list of what may be opened, so it
+  arrives as a download and is never a document in this origin. The two lists
+  are separate for that reason and must not be made to agree.
   Reading a stored file needs the session, like everything else below
   `/api/v1`: the pictures of a conversation are the conversation.
 - **What a peer can make grow has a number next to it.** How many messages
