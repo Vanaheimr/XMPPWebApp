@@ -231,6 +231,24 @@ export class ChatStore {
 
     }
 
+    /**
+     * XEP-0308: replaces the last line this app said in the room.
+     *
+     * The line keeps its place and its time — a correction is not a new thing
+     * said later, it is the same thing said properly, and moving it to the
+     * bottom would put it after the answers to it.
+     */
+    async correctInRoom(jid: string, body: string): Promise<RoomMessage> {
+
+        const corrected = await api.rooms.correct(jid, body);
+
+        this.applyRoomMessage(jid, corrected);
+        this.emit({ type: 'roomMessage', jid, message: corrected });
+
+        return corrected;
+
+    }
+
     async sendToRoom(jid: string, body: string): Promise<RoomMessage> {
 
         const result = await api.rooms.send(jid, body);
@@ -410,6 +428,24 @@ export class ChatStore {
         this.emit({ type: 'chats' });
 
         return result.chat;
+
+    }
+
+    /**
+     * XEP-0308: replaces the last line sent here.
+     *
+     * Refused by the server where the conversation is encrypted — a correction
+     * can only go out in the clear, and it carries the text that was
+     * encrypted. The refusal is shown rather than worked around.
+     */
+    async correct(jid: string, body: string): Promise<Message> {
+
+        const corrected = await api.chats.correct(jid, body);
+
+        this.applyMessage(jid, corrected);
+        this.emit({ type: 'message', jid, message: corrected });
+
+        return corrected;
 
     }
 

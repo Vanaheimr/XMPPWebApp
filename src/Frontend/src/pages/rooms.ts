@@ -112,6 +112,9 @@ class RoomView {
     private current:  string | null = null;
     private drawn:    string | null = null;
 
+    /** XEP-0308: whether the box holds a line being said again properly. */
+    private editing:  boolean = false;
+
     constructor(private readonly root: HTMLElement) {
 
         this.state      = must<HTMLElement>(root, '#me-state');
@@ -137,10 +140,36 @@ class RoomView {
         });
 
         this.textarea.addEventListener('keydown', event => {
+
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 void this.send();
+                return;
             }
+
+            // XEP-0308: up-arrow in an empty box takes back the last line said
+            // here, to be said properly. Sending it then corrects rather than
+            // repeats — which is the whole point, because the wrong word is
+            // standing in front of everybody until it is replaced.
+            if (event.key === 'ArrowUp' && this.textarea.value.length === 0) {
+
+                const mine = this.lastOwnLine();
+
+                if (mine !== null) {
+                    event.preventDefault();
+                    this.textarea.value  = mine.body;
+                    this.editing         = true;
+                    this.composer.classList.add('editing');
+                }
+
+                return;
+
+            }
+
+            // And out again, with the box as it was.
+            if (event.key === 'Escape' && this.editing)
+                this.stopEditing();
+
         });
 
         this.list.addEventListener('click', event => {
@@ -413,6 +442,9 @@ class RoomView {
                         ${message.private
                               ? html`<span class="only-you" title="Said to you alone (XEP-0045, 7.5). The box below answers the room, not the person.">only you</span>`
                               : ''}
+                        ${message.corrected
+                              ? html`<span class="edited" title="XEP-0308: this line was corrected after it was said">edited</span>`
+                              : ''}
                     </div>
                     <div class="body-slot" data-body="${message.id}"></div>
                 </div>
@@ -530,18 +562,42 @@ class RoomView {
 
     }
 
+    /** The last line this app said in the room on screen, or null. */
+    private lastOwnLine(): RoomMessage | null {
+
+        if (this.current === null)
+            return null;
+
+        const lines = store.roomMessages.get(this.current) ?? [];
+
+        for (let i = lines.length - 1; i >= 0; i--)
+            if (lines[i].mine)
+                return lines[i];
+
+        return null;
+
+    }
+
+    private stopEditing(): void {
+        this.editing         = false;
+        this.textarea.value  = '';
+        this.composer.classList.remove('editing');
+    }
+
     private async send(): Promise<void> {
 
-        const jid   = this.current;
-        const body  = this.textarea.value.trim();
+        const jid       = this.current;
+        const body      = this.textarea.value.trim();
+        const editing   = this.editing;
 
         if (jid === null || body.length === 0)
             return;
 
         this.textarea.value = '';
+        this.stopEditing();
 
         try {
-            await store.sendToRoom(jid, body);
+            await (editing ? store.correctInRoom(jid, body) : store.sendToRoom(jid, body));
         }
         catch (error) {
             // Put back what was typed. A refusal here usually means somebody

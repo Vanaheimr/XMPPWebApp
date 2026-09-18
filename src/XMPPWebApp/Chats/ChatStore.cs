@@ -414,6 +414,51 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// sends in the clear. It is the carbon of another device of our own
         /// that did, and the line says so rather than looking like one of ours.
         /// </remarks>
+        /// <summary>
+        /// XEP-0308: replaces the text of the last line this app sent here.
+        /// </summary>
+        /// <returns>
+        /// The corrected line, or null when nothing has gone out here yet.
+        /// </returns>
+        /// <remarks>
+        /// <b>The line keeps its place and its time.</b> A correction is not a
+        /// new thing said later; it is the same thing said properly, and moving
+        /// it to the bottom would put it after answers to it.
+        ///
+        /// The id changes, because the correction is a stanza of its own and is
+        /// what a further correction has to name. Whoever mistypes also
+        /// mistypes in the correction.
+        /// </remarks>
+        public ChatMessage? CorrectLastOutgoing(JID     Chat,
+                                                String  MessageId,
+                                                String  Body)
+        {
+            lock (@lock)
+            {
+
+                if (!chats.TryGetValue(Chat.Bare, out var conversation))
+                    return null;
+
+                var index = conversation.Messages.FindLastIndex(
+                                message => message.Direction == MessageDirection.Outgoing);
+
+                if (index < 0)
+                    return null;
+
+                var corrected = conversation.Messages[index] with {
+                                    Id         = MessageId,
+                                    Body       = Body,
+                                    Corrected  = true
+                                };
+
+                conversation.Messages[index] = corrected;
+
+                Changed(conversation);
+                return Changed(corrected);
+
+            }
+        }
+
         public ChatMessage AddOutgoing(JID                  Chat,
                                        String               MessageId,
                                        String               Body,

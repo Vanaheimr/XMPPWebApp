@@ -1071,6 +1071,41 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (String.IsNullOrWhiteSpace(body))
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest, "There is nothing to say.");
 
+            // XEP-0308 in a room, possible at all since D135: "corrects":
+            // true replaces the last line this app said here.
+            //
+            // The room is where a correction is worth most - a mistyped word
+            // stands in front of everybody until it is fixed - and it was the
+            // one place it could not be done, because nothing said in a room
+            // was ever written down as correctable.
+            //
+            // Refused where the room carries encryption, for the reason a
+            // conversation is: the correction can only go out in the clear,
+            // and it carries the text that was encrypted.
+            if (json.Value<Boolean?>("corrects") == true)
+            {
+
+                if (Rooms.TrySnapshot(jid, out _, out var state, out _) &&
+                    state?.CannotEncrypt is null)
+                {
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "This room carries encryption, and a correction would go " +
+                                     "out in the clear - carrying the very text that was " +
+                                     "encrypted. Say the line again instead.");
+                }
+
+                var corrected = await Client!.CorrectLastMessageAsync(body, jid);
+
+                if (corrected is null)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "Nothing has been said here yet, so there is nothing to correct.");
+
+                return JSONResponse(Request, HTTPStatusCode.OK,
+                                    Rooms.CorrectLastOwn(jid, corrected, body)?.ToJSON()
+                                        ?? new JObject());
+
+            }
+
             if (Client is not { IsConnected: true } client)
                 return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
 
@@ -1609,6 +1644,37 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             if (Client is not { IsConnected: true })
                 return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            // XEP-0308: "corrects": true means replace the last line this app
+            // sent here rather than say a new one.
+            //
+            // Refused where the conversation is encrypted, and that is not
+            // timidity: a correction carries the corrected text, and this app
+            // can only send one in the clear. Sending it would put the very
+            // words that were encrypted a moment ago on the wire in plain -
+            // and it would look, to whoever reads the result, like a
+            // successful correction of an encrypted line.
+            if (json.Value<Boolean?>("corrects") == true)
+            {
+
+                if (Chats.EncryptionOn(jid))
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "This conversation is encrypted, and a correction would " +
+                                     "go out in the clear - carrying the very text that was " +
+                                     "encrypted. Turn encryption off for it first, or say the " +
+                                     "line again.");
+
+                var corrected = await Client!.CorrectLastMessageAsync(body, jid);
+
+                if (corrected is null)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "Nothing has gone out here yet, so there is nothing to correct.");
+
+                return JSONResponse(Request, HTTPStatusCode.OK,
+                                    Chats.CorrectLastOutgoing(jid, corrected, body)?.ToJSON()
+                                        ?? new JObject());
+
+            }
 
             ChatMessage?  message;
             String?       refusal;

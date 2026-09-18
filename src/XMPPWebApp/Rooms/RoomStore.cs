@@ -412,6 +412,49 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
         /// entering. <b>A delayed line does not count as unread</b>: what a room
         /// sends when one walks in is not news.
         /// </param>
+        /// <summary>
+        /// XEP-0308: replaces the text of the last line this app said in a room.
+        /// </summary>
+        /// <returns>
+        /// The corrected line, or null when nothing has been said here yet.
+        /// </returns>
+        /// <remarks>
+        /// <b>Ours, by the nickname this app holds.</b> The same rule the
+        /// incoming side follows and for the same reason: a correction belongs
+        /// to the occupant who wrote the line, and in a room that is all there
+        /// is to go by.
+        /// </remarks>
+        public RoomMessage? CorrectLastOwn(JID     Jid,
+                                           String  MessageId,
+                                           String  Body)
+        {
+            lock (@lock)
+            {
+
+                if (!rooms.TryGetValue(Jid.Bare, out var room))
+                    return null;
+
+                var index = room.Messages.FindLastIndex(line => line.Nick == room.Nick);
+
+                if (index < 0)
+                    return null;
+
+                var corrected = room.Messages[index] with {
+                                    Id         = MessageId,
+                                    Body       = Body,
+                                    Corrected  = true
+                                };
+
+                room.Messages[index] = corrected;
+
+                sequence++;
+                OnRoomMessage?.Invoke(sequence, corrected);
+
+                return corrected;
+
+            }
+        }
+
         public RoomMessage AddIncoming(JID             Jid,
                                        String          Nick,
                                        String?         MessageId,
@@ -421,12 +464,58 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                        Boolean         Encrypted  = false,
                                        String?         RepliesTo  = null,
                                        String?         Quote      = null,
-                                       Boolean         Private    = false)
+                                       Boolean         Private    = false,
+                                       String?         Corrects   = null)
         {
             lock (@lock)
             {
 
                 var room     = GetOrAdd(Jid.Bare, Nick);
+
+                // XEP-0308: a correction replaces the text of the line it
+                // names and nothing else - the line keeps its place and its
+                // time, which in a room is what keeps a conversation
+                // readable.
+                //
+                // <b>And only that occupant’s own line.</b> Section 5:
+                // a correction MUST only be allowed when both the original
+                // and the correction come from the same sender, and in a room
+                // that is the full address - which is the room plus the
+                // nickname, so the nickname is the comparison. Without it
+                // anybody in the room could rewrite anybody else’s words by
+                // naming their id, and the line would keep the name of the
+                // person who never wrote it.
+                //
+                // What the nickname cannot catch is somebody leaving and
+                // another taking the name; the section says a correction
+                // across a rejoin SHOULD be refused and there is nothing in a
+                // semi-anonymous room to tell them apart with. Named rather
+                // than guessed at.
+                if (Corrects is not null)
+                {
+
+                    var index = room.Messages.FindIndex(line => line.Id   == Corrects &&
+                                                                line.Nick == Nick);
+
+                    if (index >= 0)
+                    {
+
+                        var corrected = room.Messages[index] with {
+                                            Body       = Body,
+                                            Corrected  = true
+                                        };
+
+                        room.Messages[index]  = corrected;
+                        room.LastActivity     = Max(room.LastActivity, Timestamp);
+
+                        sequence++;
+                        OnRoomMessage?.Invoke(sequence, corrected);
+
+                        return corrected;
+
+                    }
+
+                }
 
                 var message  = new RoomMessage(
                                    MessageId ?? NewId(),
@@ -439,7 +528,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                    Encrypted,
                                    RepliesTo,
                                    Quote,
-                                   Private
+                                   Private,
+                                   Corrected: false
                                );
 
                 Insert(room, message);

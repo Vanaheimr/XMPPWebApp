@@ -230,6 +230,8 @@ export interface RoomMessage {
      * word and cannot yet send one, and an unmarked line would make that a trap.
      */
     private:    boolean;
+    /** XEP-0308: whether this line has been replaced by a correction. */
+    corrected:  boolean;
 }
 
 /** A room as the list in the room view shows it. */
@@ -537,6 +539,13 @@ export const api = {
                        (limit !== undefined ? `&limit=${limit}` : '')
                    ),
         send:      (chat: string, body: string)              => request<{ seq: number; message: Message }>('POST', `/chats/${jid(chat)}/messages`, { body }),
+        /**
+         * XEP-0308: replaces the last line sent here instead of saying a new one.
+         *
+         * Refused where the conversation is encrypted - a correction can only go
+         * out in the clear, and it carries the text that was encrypted.
+         */
+        correct:   (chat: string, body: string)              => request<Message>('POST', `/chats/${jid(chat)}/messages`, { body, corrects: true }),
 
         /**
          * Sends a file (XEP-0363, and XEP-0454 when the conversation is
@@ -572,6 +581,8 @@ export const api = {
          * comes back says which of the two it was.
          */
         send:      (room: string, body: string)      => request<{ message: RoomMessage }>('POST', `/rooms/${jid(room)}/messages`, { body }),
+        /** XEP-0308: replaces the last line this app said in the room. */
+        correct:   (room: string, body: string)      => request<RoomMessage>('POST', `/rooms/${jid(room)}/messages`, { body, corrects: true }),
         read:      (room: string)                    => request<void>        ('POST',   `/rooms/${jid(room)}/read`),
         subject:   (room: string, subject: string)   => request<void>        ('POST',   `/rooms/${jid(room)}/subject`, { subject }),
 

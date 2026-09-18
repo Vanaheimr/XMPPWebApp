@@ -507,6 +507,120 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ACorrectionInARoomReplacesTheLineAndKeepsItsPlace()
+
+        /// <summary>
+        /// XEP-0308 in a room: the corrected line, not a second one.
+        /// </summary>
+        /// <remarks>
+        /// Until D135 the room view had no correction handling at all, so a
+        /// correction arrived as a fresh line and the mistyped one stood above
+        /// it for ever - with nothing saying which of the two holds.
+        /// </remarks>
+        [Test]
+        public async Task ACorrectionInARoomReplacesTheLineAndKeepsItsPlace()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='typo-1'>" +
+                    "<body>the wrogn word</body>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "the wrogn word"), "the mistyped line");
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='fix-1'>" +
+                    "<body>the right word</body>" +
+                    "<replace id='typo-1' xmlns='urn:xmpp:message-correct:0'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "the right word"), "the correction");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(Lines().Count(line => line.Nick == "alice"), Is.EqualTo(1),
+                            "The correction came in as a second line, so the wrong word stands " +
+                            "above the right one with nothing saying which of them holds.");
+
+                Assert.That(Lines().First(line => line.Nick == "alice").Corrected, Is.True,
+                            "The line was replaced without saying so, which is worse than not " +
+                            "replacing it: what was read a moment ago is gone and nothing marks " +
+                            "that it changed.");
+
+            });
+
+        }
+
+        #endregion
+
+        #region NobodyCorrectsSomebodyElsesLine()
+
+        /// <summary>
+        /// XEP-0308, section 5: whose line a correction may replace.
+        /// </summary>
+        /// <remarks>
+        /// <blockquote>A correction MUST only be allowed when both the original
+        /// message and correction originate from the same sender ... in MUCs and
+        /// MUC-PMs the correction's full-JID must match the original
+        /// full-JID.</blockquote>
+        ///
+        /// In a room the full address is the room plus the nickname, so the
+        /// nickname is the comparison. <b>Without it anybody standing in the room
+        /// can rewrite anybody else's words</b> by naming their id - and the line
+        /// keeps the name of the person who never wrote it, which is worse than
+        /// a forged message, because it is signed by somebody who is there to be
+        /// asked about it.
+        ///
+        /// What the nickname cannot catch is somebody leaving and another taking
+        /// the name. The section says a correction across a rejoin SHOULD be
+        /// refused, and in a semi-anonymous room there is nothing to tell the
+        /// two apart with. Named rather than guessed at.
+        /// </remarks>
+        [Test]
+        public async Task NobodyCorrectsSomebodyElsesLine()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='hers-1'>" +
+                    "<body>what Alice said</body>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "what Alice said"), "Alice's line");
+
+            // Bob names her id.
+            await session.SendAsync(
+                $"<message from='{RoomJid}/bob' to='{api!.Client!.FullJid}' type='groupchat' id='his-1'>" +
+                    "<body>what Bob put in her mouth</body>" +
+                    "<replace id='hers-1' xmlns='urn:xmpp:message-correct:0'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Body == "what Bob put in her mouth"),
+                        "Bob's line to arrive as its own");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(Lines().First(line => line.Nick == "alice").Body,
+                            Is.EqualTo("what Alice said"),
+                            "Somebody else rewrote her line by naming its id, and it still " +
+                            "carries her name.");
+
+                Assert.That(Lines().Any(line => line.Nick == "bob" &&
+                                                line.Body == "what Bob put in her mouth"), Is.True,
+                            "Bob's own words went nowhere, so the refusal above swallowed a " +
+                            "message instead of refusing a correction.");
+
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

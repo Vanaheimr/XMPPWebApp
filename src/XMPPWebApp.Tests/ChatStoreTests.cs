@@ -595,6 +595,85 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region CorrectingTheLastLine_ReplacesItAndKeepsItsPlace()
+
+        /// <summary>
+        /// XEP-0308 from this side: what this app said, said properly.
+        /// </summary>
+        /// <remarks>
+        /// <b>The line keeps its place and its time.</b> A correction is not a
+        /// new thing said later; it is the same thing said properly, and moving
+        /// it to the bottom would put it after the answers to it.
+        ///
+        /// The id changes, because the correction is a stanza of its own and is
+        /// what a further correction has to name - whoever mistypes also
+        /// mistypes in the correction.
+        /// </remarks>
+        [Test]
+        public void CorrectingTheLastLine_ReplacesItAndKeepsItsPlace()
+        {
+
+            var store = new ChatStore();
+
+            store.AddOutgoing(alice, "m1", "the wrogn word", noon);
+            store.AddIncoming(alice, "alice@example.org/phone", "m2", "the what?", noon.AddMinutes(1));
+
+            var corrected = store.CorrectLastOutgoing(alice, "m3", "the right word");
+
+            store.TrySnapshot(alice, out _, out _, out var lines);
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(corrected,       Is.Not.Null);
+                Assert.That(corrected!.Body, Is.EqualTo("the right word"));
+                Assert.That(corrected.Id,    Is.EqualTo("m3"),
+                            "The correction kept the old id, so a further correction would name " +
+                            "a stanza that no longer exists.");
+
+                Assert.That(lines,           Has.Count.EqualTo(2),
+                            "The correction came in as a third line, so the wrong word stands " +
+                            "above the right one.");
+
+                Assert.That(lines[0].Body,      Is.EqualTo("the right word"),
+                            "The corrected line moved, so it now stands after the answer to it.");
+                Assert.That(lines[0].Corrected, Is.True);
+                Assert.That(lines[1].Body,      Is.EqualTo("the what?"));
+
+            });
+
+        }
+
+        #endregion
+
+        #region CorrectingWithNothingSent_IsNotACorrection()
+
+        /// <summary>
+        /// A conversation nothing has gone out in.
+        /// </summary>
+        /// <remarks>
+        /// Null and not a new line: a correction of nothing is a mistake, and
+        /// turning it into an ordinary message would put words on screen that
+        /// the person meant as a replacement for something else.
+        /// </remarks>
+        [Test]
+        public void CorrectingWithNothingSent_IsNotACorrection()
+        {
+
+            var store = new ChatStore();
+
+            Assert.That(store.CorrectLastOutgoing(alice, "m1", "never mind"), Is.Null,
+                        "A conversation that has never been written in accepted a correction.");
+
+            store.AddIncoming(alice, "alice@example.org/phone", "m2", "Hello?", noon);
+
+            Assert.That(store.CorrectLastOutgoing(alice, "m3", "not mine to fix"), Is.Null,
+                        "Somebody else's line was corrected as though this app had written it.");
+
+        }
+
+        #endregion
+
         #region (private static) Archived(Chat, Id, Body, When)
 
         /// <summary>

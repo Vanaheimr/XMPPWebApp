@@ -137,7 +137,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                      Boolean         Encrypted,
                                      String?         RepliesTo,
                                      String?         Quote,
-                                     Boolean         Private   = false)
+                                     Boolean         Private   = false,
+                                     Boolean         Corrected = false)
     {
 
         public JObject ToJSON()
@@ -153,7 +154,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                    new JProperty("encrypted",  Encrypted),
                    new JProperty("repliesTo",  RepliesTo),
                    new JProperty("quote",      Quote),
-                   new JProperty("private",    Private)
+                   new JProperty("private",    Private),
+                   new JProperty("corrected",  Corrected)
                );
 
     }

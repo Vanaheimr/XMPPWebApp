@@ -751,7 +751,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 Encrypted:  Encrypted,
                 RepliesTo:  Message.RepliesTo?.Id,
                 Quote:      Message.Quote,
-                Private:    Private
+                Private:    Private,
+                Corrects:   Message.ReplacesId
             );
 
         }

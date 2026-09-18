@@ -110,6 +110,9 @@ class ChatView {
     private readonly toasts:     HTMLElement;
 
     private current:     string | null = null;
+
+    /** XEP-0308: whether the box holds a line being said again properly. */
+    private editing:     boolean = false;
     private elements     = new Map<string, HTMLElement>();
     private lastRendered: Message | null = null;
     private atBottom     = true;
@@ -192,10 +195,35 @@ class ChatView {
         });
 
         this.textarea.addEventListener('keydown', event => {
+
             if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                 event.preventDefault();
                 void this.send();
+                return;
             }
+
+            // XEP-0308: up-arrow in an empty box takes back the last line sent
+            // here, to be said properly. Sending it then replaces that line
+            // instead of adding one.
+            if (event.key === 'ArrowUp' && this.textarea.value.length === 0) {
+
+                const mine = this.lastOwnLine();
+
+                if (mine !== null) {
+                    event.preventDefault();
+                    this.textarea.value = mine.body;
+                    this.editing        = true;
+                    this.composer.classList.add('editing');
+                    this.autosize();
+                }
+
+                return;
+
+            }
+
+            if (event.key === 'Escape' && this.editing)
+                this.stopEditing();
+
         });
 
         this.textarea.addEventListener('input', () => {
@@ -850,10 +878,34 @@ class ChatView {
 
     }
 
+    /** The last line this app sent in the conversation on screen, or null. */
+    private lastOwnLine(): Message | null {
+
+        if (this.current === null)
+            return null;
+
+        const lines = store.messages.get(this.current) ?? [];
+
+        for (let i = lines.length - 1; i >= 0; i--)
+            if (lines[i].direction === 'out')
+                return lines[i];
+
+        return null;
+
+    }
+
+    private stopEditing(): void {
+        this.editing        = false;
+        this.textarea.value = '';
+        this.composer.classList.remove('editing');
+        this.autosize();
+    }
+
     private async send(): Promise<void> {
 
-        const jid   = this.current;
-        const body  = this.textarea.value.trimEnd();
+        const jid      = this.current;
+        const body     = this.textarea.value.trimEnd();
+        const editing  = this.editing;
 
         if (jid === null || body.trim().length === 0)
             return;
@@ -863,7 +915,8 @@ class ChatView {
         try
         {
             this.stopTyping();
-            await store.send(jid, body);
+            await (editing ? store.correct(jid, body) : store.send(jid, body));
+            this.stopEditing();
             this.textarea.value = '';
             this.drafts.delete(jid);
             this.autosize();

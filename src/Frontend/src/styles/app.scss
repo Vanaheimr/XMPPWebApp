@@ -959,6 +959,13 @@ input, textarea, select {
     padding-left: 0.6rem;
 }
 
+// XEP-0308: the box holds a line being said again, not a new one. Marked,
+// because sending it replaces something instead of adding to it.
+.composer.editing textarea {
+    border-color: var(--accent, #7a5af8);
+}
+
+.rooms .message .edited,
 .rooms .message.private .only-you {
     font-size:      0.75rem;
     text-transform: uppercase;
