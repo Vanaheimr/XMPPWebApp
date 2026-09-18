@@ -113,14 +113,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         public const           Int32     MaxRedirects  = 5;
 
         /// <summary>
-        /// What may be stored, and therefore what may later be served from this
-        /// program's own origin. Everything a chat client shows or plays, and
-        /// nothing a browser would treat as a document.
+        /// What may be stored. Everything a chat client shows or plays, and one
+        /// thing it does not.
         /// </summary>
         /// <remarks>
         /// image/svg+xml is missing on purpose - see the remarks on the class.
-        /// So is text/*, application/pdf and everything else that opens rather
-        /// than displays.
+        /// So is text/* and everything else a browser opens as a document in
+        /// the origin that served it.
+        ///
+        /// <b>application/pdf is here since D139, and it is the one entry whose
+        /// safety is not in this list.</b> A PDF is exactly the kind of thing
+        /// the rule above excludes - so it is stored, and then never served as
+        /// one: ".pdf" is deliberately absent from
+        /// <see cref="typesByExtension"/>, which makes
+        /// <see cref="ContentTypeForName"/> answer null, which makes the API
+        /// serve it as application/octet-stream with
+        /// <c>Content-Disposition: attachment</c>. It arrives as a download and
+        /// is never a document in this origin.
+        ///
+        /// The two lists are therefore not two spellings of one idea and must
+        /// not be merged: this one says what may be <i>kept</i>, the other what
+        /// may be <i>opened</i>. Adding ".pdf" to the other one would undo this
+        /// entry without touching it.
         /// </remarks>
         public static readonly IReadOnlyDictionary<String, String> AllowedTypes =
             new Dictionary<String, String>(StringComparer.OrdinalIgnoreCase) {
@@ -138,7 +152,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 { "audio/ogg",       ".oga"  },
                 { "audio/opus",      ".opus" },
                 { "audio/wav",       ".wav"  },
-                { "audio/webm",      ".weba" }
+                { "audio/webm",      ".weba" },
+
+                // Stored, and served as a download - see the remarks above.
+                { "application/pdf", ".pdf"  }
             };
 
         /// <summary>

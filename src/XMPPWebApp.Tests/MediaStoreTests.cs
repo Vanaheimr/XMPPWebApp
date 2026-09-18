@@ -213,6 +213,57 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region APdfIsKeptAndNeverOpened()
+
+        /// <summary>
+        /// D139: a PDF may be stored, and may never be served as a document.
+        /// </summary>
+        /// <remarks>
+        /// The two lists in MediaStore look like two spellings of one idea and
+        /// are not. <c>AllowedTypes</c> says what may be <b>kept</b>;
+        /// <c>typesByExtension</c>, which <c>ContentTypeForName</c> reads, says
+        /// what may be <b>opened in a tab</b>. A PDF belongs in the first and
+        /// must never reach the second: a stored file that the browser treats
+        /// as a document is a document in this program's own origin.
+        ///
+        /// What makes it safe is not in the list that allows it, which is
+        /// exactly why this test exists. Somebody adding ".pdf" to the other
+        /// list would undo the safety without touching the entry that granted
+        /// it, and nothing else here would notice.
+        /// </remarks>
+        [Test]
+        public void APdfIsKeptAndNeverOpened()
+        {
+
+            Assert.Multiple(() => {
+
+                Assert.That(MediaStore.AllowedTypes.ContainsKey("application/pdf"),
+                            Is.True,
+                            "A PDF shared in a conversation is not kept at all.");
+
+                Assert.That(MediaStore.ContentTypeForName("shared.pdf"),
+                            Is.Null,
+                            "A stored PDF is served with a content type this program vouches for, " +
+                            "so a browser opens it in a tab - as a document in this program's own " +
+                            "origin. It has to come back as a download: null here is what puts " +
+                            "Content-Disposition: attachment on the answer.");
+
+                Assert.That(MediaStore.ContentTypeForName("shared.PDF"),
+                            Is.Null,
+                            "The upper-case name got through, so the rule is one about spelling.");
+
+                // The other direction, so this test says what still holds and
+                // not only what changed.
+                Assert.That(MediaStore.ContentTypeForName("shared.png"),
+                            Is.EqualTo("image/png"),
+                            "A picture stopped being shown inline.");
+
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

@@ -145,6 +145,11 @@ that talks to it.
   when the upload has expired, an encrypted one is decrypted on the way in,
   and no outside host learns who is reading. What is fetched, and what it may
   be served back as, is narrow on purpose — see [Security notes](#security-notes).
+  **PDFs are kept since D139 and are the one kind that is stored without being
+  shown**: a stored file a browser opens as a document is a document in this
+  program's own origin, so a PDF comes back as a download and never in a tab.
+  The list of what may be kept and the list of what may be opened are separate
+  for exactly that reason, and a test holds them apart.
 - **Sending a file.** The paperclip beside the composer puts a file on the
   server's upload service (XEP-0363) and sends the address, which the page then
   shows as the picture it is. **The conversation's encryption decides the
