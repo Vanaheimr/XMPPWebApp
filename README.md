@@ -105,6 +105,26 @@ that talks to it.
   the room visible to everybody else. Entering a room that does not exist
   creates it, and unlocks it, which is a step that is easy to miss and leaves a
   room only its creator can enter.
+- **Said again, and taken back.** The up arrow in an empty composer puts the
+  last line you said back into it (XEP-0308); what goes out is the complete new
+  text, and the line keeps its place with an *edited* mark instead of jumping to
+  the bottom. Beside it a **take back** button withdraws a line entirely
+  (XEP-0424) — a button and not a keystroke, because it cannot be undone. The
+  line then keeps its place and loses its words: removing it outright would
+  reshuffle a conversation under somebody who is reading it and leave answers
+  pointing at nothing, and keeping the words would defeat the request. Both work
+  in a room too, on the name the *room* gave the line, and **neither will touch a
+  line somebody else said** — without that rule anybody standing there could put
+  words into a person's mouth or take theirs away, and the line would keep the
+  name of whoever did neither. A correction is refused where the conversation is
+  encrypted, because it would put on the wire in clear what went out encrypted a
+  moment ago; a retraction is not, because it carries no typed text of its own —
+  only a fallback sentence this app writes.
+- **A word to one occupant, marked as one** (XEP-0045, section 7.5). A private
+  message inside a room is shown as a line in the room, because that is where it
+  was said, and it is **marked, because the composer answers the room**. This app
+  can read a private word and cannot yet send one, and an unmarked line would
+  make that a trap: an answer meant for one person going to everybody present.
 - **Pictures inline.** A message that is nothing but one `https://` URL ending
   in `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif` or `.bmp` is shown as
   the picture it points to, linked to the original. That is how a client hands
@@ -189,12 +209,15 @@ that talks to it.
   presence change, typing state and connection change as it happens; the page
   never polls.
 
-Not implemented, as in the console: MUC/MIX group chat, MAM history (the
-archive here is this web app's own, not the server's), HTTP file upload,
-avatars. Nor a way to *accept* a changed OMEMO identity key — and no button
-for it either, because a decision asked of somebody who has not been given the
-means to make it is worse than the question. The full picture of what the library
-speaks is in the
+Not implemented: MIX (XEP-0369), Jingle, blocking (XEP-0191), in-band
+registration of an account, and sending a private word inside a room — this app
+reads one and marks it, and has no way to answer it anywhere but in the room.
+Asking the server's archive for older pages on demand is not here either: what a
+connection brings up is filled in behind what is on disk, and nothing reaches
+further back than that. Nor a way to *accept* a changed OMEMO identity key — and
+no button for it either, because a decision asked of somebody who has not been
+given the means to make it is worse than the question. The full picture of what
+the library speaks is in the
 [README of XMPPConsole](https://github.com/Vanaheimr/XMPPConsole#what-it-speaks-today).
 
 ## Requirements
