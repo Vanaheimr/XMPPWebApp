@@ -75,6 +75,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         private XMPPWebAPI?  api;
         private Uri          origin   = new ("http://127.0.0.1/");
         private Recorder     log      = new ();
+        private ILoggerFactory? loggers;
 
         #endregion
 
@@ -156,7 +157,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                           server,
                           new AccountFile(Path.Combine(root, "xmpp-account.json")),
                           DataDirectory:  root,
-                          LoggerFactory:  LoggerFactory.Create(builder => builder.AddProvider(log).SetMinimumLevel(LogLevel.Trace))
+                          LoggerFactory:  loggers = LoggerFactory.Create(builder => builder.AddProvider(log).SetMinimumLevel(LogLevel.Trace))
                       );
 
             // The account database is an append-only log and has to be replayed
@@ -190,6 +191,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             server = null;
             api    = null;
+
+            // The API only uses the factory; whoever creates it disposes it,
+            // as Program does. A provider handed in as an instance stays the
+            // caller's as well.
+            loggers?.Dispose();
+            loggers = null;
+
+            log.Dispose();
 
             try
             {
