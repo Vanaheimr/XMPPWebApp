@@ -923,6 +923,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest,
                                  "A nickname cannot contain '/' or '@'.");
 
+            // Refused here and not left to the library: it puts the room into
+            // its table before it builds the address, so a nickname that is no
+            // resource (RFC 7622) left a room half entered - and one carrying
+            // a control character would have reached the stream at all.
+            // Refused rather than cleaned, because the name somebody walks in
+            // under is theirs to choose, not this program's to change.
+            if (XmlText.Sanitize(nick) != nick || !JID.TryParse($"{jid.Bare}/{nick}", out _))
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest,
+                                 "That is not a usable nickname.");
+
             Rooms.Joining(jid, nick);
 
             MucJoinOutcome outcome;
@@ -1100,10 +1110,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             }
 
-            var body = json["body"]?.Value<String>();
+            // The same two gates a conversation has, and they were missing
+            // here: a pasted control character is not escaped by anybody, it
+            // becomes a stream error - and that ends the connection for every
+            // conversation and every room, not only for this line. See
+            // XmlText. The length is the same limit for the same reason.
+            var body = XmlText.Sanitize((json["body"]?.Value<String>() ?? "").TrimEnd());
 
-            if (String.IsNullOrWhiteSpace(body))
+            if (body.Trim().Length == 0)
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest, "There is nothing to say.");
+
+            if (body.Length > MaxMessageLength)
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, $"The message is longer than {MaxMessageLength} characters.");
 
             // XEP-0308 in a room, possible at all since D135: "corrects":
             // true replaces the last line this app said here.
@@ -1304,8 +1322,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (Client is not { IsConnected: true } client)
                 return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
 
-            // An empty subject is a subject: it is how one is removed.
-            var subject = json["subject"]?.Value<String>() ?? "";
+            // An empty subject is a subject: it is how one is removed. Cleaned
+            // and limited like a line, because it travels like one - as the
+            // text of a message, where a control character ends the stream.
+            var subject = XmlText.Sanitize(json["subject"]?.Value<String>() ?? "");
+
+            if (subject.Length > MaxMessageLength)
+                return ErrorJSON(Request, HTTPStatusCode.BadRequest, $"The subject is longer than {MaxMessageLength} characters.");
 
             return await client.SetRoomSubjectAsync(jid, subject)
                        ? NoContent(Request)
@@ -1617,10 +1640,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // a path separator is a way of writing somewhere else. Refused
             // rather than repaired: a name that had to be changed is not the
             // name that was asked for, and the sender should know.
+            //
+            // And it travels into the slot request first, as an attribute,
+            // where a control character - a file system that is not Windows
+            // allows them in a name - is a stream error like in a body.
             if (name.Length == 0 ||
                 name.Contains('/') ||
                 name.Contains('\\') ||
-                name.Contains(".."))
+                name.Contains("..") ||
+                XmlText.Sanitize(name) != name)
             {
                 return ErrorJSON(Request, HTTPStatusCode.BadRequest, "That is not a usable file name.");
             }

@@ -982,6 +982,164 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AControlCharacterInALine_DoesNotEndTheConnection()
+
+        /// <summary>
+        /// What a browser lets somebody paste and an XML stream may not carry,
+        /// said in a room.
+        /// </summary>
+        /// <remarks>
+        /// A conversation has cleaned its lines since they were first sent; a
+        /// room never did. A NUL or a vertical tab is not escaped by anybody -
+        /// it becomes a stream error, and the stream is the one every
+        /// conversation and every room of this account travels on. One pasted
+        /// character took all of them down.
+        ///
+        /// <b>What is checked is the stanza, not the connection.</b> The test
+        /// server reads frames as text and forgives what a real one does not;
+        /// Prosody and ejabberd answer a stanza that is not well-formed XML
+        /// 1.0 with not-well-formed (RFC 6120, 4.9.3.13) and close the stream.
+        /// So the frame itself has to parse - which is the condition a real
+        /// server enforces, and the one this side controls.
+        /// </remarks>
+        [Test]
+        public async Task AControlCharacterInALine_DoesNotEndTheConnection()
+        {
+
+            var session = await JoinAsync();
+
+            using var browser = await BrowserAsync();
+
+            var said = await Post(browser, MessagesPath,
+                                  new JObject(new JProperty("body", "one\u0001two\u000Bthree￿")));
+
+            Assert.That(said.StatusCode, Is.EqualTo(HttpStatusCode.Created), await said.Content.ReadAsStringAsync());
+
+            await Until(() => session.CountReceived("three") > 0, "the line on the wire");
+
+            var frame = session.Received.Last(received => received.Contains("three", StringComparison.Ordinal));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(() => XElement.Parse(frame), Throws.Nothing,
+                            "The stanza is not well-formed XML 1.0, and a real server ends the stream " +
+                            "over it - for every room and conversation of this account.");
+
+                Assert.That(Lines().Single(line => line.Mine).Body, Is.EqualTo("onetwothree"));
+
+                Assert.That(api!.Client!.IsConnected, Is.True);
+
+            });
+
+        }
+
+        #endregion
+
+        #region ALineTooLong_IsRefused()
+
+        [Test]
+        public async Task ALineTooLong_IsRefused()
+        {
+
+            var session = await JoinAsync();
+
+            using var browser = await BrowserAsync();
+
+            var said = await Post(browser, MessagesPath,
+                                  new JObject(new JProperty("body", new String('x', XMPPWebAPI.MaxMessageLength + 1))));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(said.StatusCode,                                         Is.EqualTo(HttpStatusCode.BadRequest));
+                Assert.That(session.CountReceived(new String('x', 100)),             Is.EqualTo(0), "it went out anyway");
+                Assert.That(Lines().Any(line => line.Mine),                          Is.False);
+            });
+
+        }
+
+        #endregion
+
+        #region AControlCharacterInTheSubject_DoesNotEndTheConnection()
+
+        /// <summary>
+        /// The subject travels as the text of a message, and had the same gap.
+        /// </summary>
+        /// <remarks>
+        /// Checked on the stanza, for the reason the test above gives.
+        /// </remarks>
+        [Test]
+        public async Task AControlCharacterInTheSubject_DoesNotEndTheConnection()
+        {
+
+            var session = await JoinAsync();
+
+            using var browser = await BrowserAsync();
+
+            var set = await Post(browser, $"api/v1/rooms/{Uri.EscapeDataString(RoomJid.ToString())}/subject",
+                                 new JObject(new JProperty("subject", "Tref\u0007fen heute")));
+
+            Assert.That(set.StatusCode, Is.EqualTo(HttpStatusCode.NoContent), await set.Content.ReadAsStringAsync());
+
+            await Until(() => session.CountReceived("fen heute") > 0, "the subject on the wire");
+
+            var frame = session.Received.Last(received => received.Contains("fen heute", StringComparison.Ordinal));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(() => XElement.Parse(frame), Throws.Nothing,
+                            "The subject stanza is not well-formed XML 1.0, and a real server ends " +
+                            "the stream over it.");
+
+                Assert.That(frame, Does.Contain("Treffen heute"));
+
+            });
+
+        }
+
+        #endregion
+
+        #region ANicknameThatIsNoResource_IsRefusedBeforeAnythingHappens()
+
+        /// <summary>
+        /// A nickname is the resource of the address the room writes somebody
+        /// under (RFC 7622) - and the library puts the room into its table
+        /// before it builds that address.
+        /// </summary>
+        [Test]
+        public async Task ANicknameThatIsNoResource_IsRefusedBeforeAnythingHappens()
+        {
+
+            var session = await JoinAsync();
+
+            using var browser = await BrowserAsync();
+
+            var other   = $"other@conference.{xmpp!.Domain}";
+
+            var joined  = await Post(browser, "api/v1/rooms",
+                                     new JObject(new JProperty("jid",  other),
+                                                 new JProperty("nick", "me\u0001")));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(joined.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+
+                Assert.That(api!.Rooms.Count, Is.EqualTo(1),
+                            "The refused room stands in the list anyway.");
+
+                Assert.That(session.CountReceived(other), Is.EqualTo(0),
+                            "Something was sent to the room the nickname was refused for.");
+
+                Assert.That(api.Client!.IsConnected, Is.True);
+
+            });
+
+        }
+
+        #endregion
+
         #region OurCorrectionsNameTheOriginalAndKeepTheLine()
 
         /// <summary>
