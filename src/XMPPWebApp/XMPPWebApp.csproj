@@ -25,8 +25,8 @@
       console there is no input line to protect here, so the stock console
       logger is enough.
     -->
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
@@ -60,9 +60,9 @@
       plain clone stops building it.
     -->
     <ProjectReference Include="..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj" Condition="Exists('..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
-    <ProjectReference Include="..\..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj"   Condition="!Exists('..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
-    <ProjectReference Include="..\..\libs\Hermod\Hermod\Hermod.csproj"          Condition="Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
-    <ProjectReference Include="..\..\..\Hermod\Hermod\Hermod.csproj"            Condition="!Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
+    <ProjectReference Include="..\..\..\Ratatoskr\Ratatoskr\Ratatoskr.csproj" Condition="!Exists('..\..\libs\Ratatoskr\Ratatoskr\Ratatoskr.csproj')" />
+    <ProjectReference Include="..\..\libs\Hermod\Hermod\Hermod.csproj" Condition="Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
+    <ProjectReference Include="..\..\..\Hermod\Hermod\Hermod.csproj" Condition="!Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
   </ItemGroup>
 
 
@@ -100,37 +100,26 @@
     <FrontendInput Include="$(FrontendDir)package.json;$(FrontendDir)package-lock.json;$(FrontendDir)tsconfig.json;$(FrontendDir)webpack.config.js" />
   </ItemGroup>
 
-  <Target Name="NpmInstall"
-          Condition="'$(FrontendBuildEnabled)' == 'true' And !Exists('$(FrontendDir)node_modules')">
+  <Target Name="NpmInstall" Condition="'$(FrontendBuildEnabled)' == 'true' And !Exists('$(FrontendDir)node_modules')">
     <Message Importance="high" Text="Frontend: installing npm dependencies in '$(FrontendDir)' ..." />
     <Exec Command="npm ci" WorkingDirectory="$(FrontendDir)" />
   </Target>
 
-  <Target Name="BuildFrontend"
-          DependsOnTargets="NpmInstall"
-          Inputs="@(FrontendInput)"
-          Outputs="$(FrontendDist)index.html"
-          Condition="'$(FrontendBuildEnabled)' == 'true'">
+  <Target Name="BuildFrontend" DependsOnTargets="NpmInstall" Inputs="@(FrontendInput)" Outputs="$(FrontendDist)index.html" Condition="'$(FrontendBuildEnabled)' == 'true'">
     <Message Importance="high" Text="Frontend: running 'npm run build' in '$(FrontendDir)' ..." />
     <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
   </Target>
 
-  <Target Name="EmbedFrontend"
-          DependsOnTargets="BuildFrontend"
-          BeforeTargets="BeforeBuild"
-          Condition="'$(DesignTimeBuild)' != 'true'">
+  <Target Name="EmbedFrontend" DependsOnTargets="BuildFrontend" BeforeTargets="BeforeBuild" Condition="'$(DesignTimeBuild)' != 'true'">
 
-    <Error Condition="!Exists('$(FrontendDist)index.html')"
-           Text="Frontend build output '$(FrontendDist)' is missing. Run 'npm run build' in '$(FrontendDir)' or drop -p:SkipFrontendBuild=true." />
+    <Error Condition="!Exists('$(FrontendDist)index.html')" Text="Frontend build output '$(FrontendDist)' is missing. Run 'npm run build' in '$(FrontendDir)' or drop -p:SkipFrontendBuild=true." />
 
     <ItemGroup>
       <_FrontendFile Include="$(FrontendDist)**\*" />
-      <EmbeddedResource Include="@(_FrontendFile)"
-                        LogicalName="$(FrontendResourcePrefix)$([System.String]::Copy('%(_FrontendFile.RecursiveDir)').Replace('\', '.').Replace('/', '.'))%(_FrontendFile.Filename)%(_FrontendFile.Extension)"
-                        WithCulture="false" />
+      <EmbeddedResource Include="@(_FrontendFile)" LogicalName="$(FrontendResourcePrefix)$([System.String]::Copy('%(_FrontendFile.RecursiveDir)').Replace('\', '.').Replace('/', '.'))%(_FrontendFile.Filename)%(_FrontendFile.Extension)" WithCulture="false" />
     </ItemGroup>
 
-    <Message Importance="high" Text="Frontend: embedding @(_FrontendFile->Count()) files from '$(FrontendDist)' as '$(FrontendResourcePrefix)*'." />
+    <Message Importance="high" Text="Frontend: embedding @(_FrontendFile-&gt;Count()) files from '$(FrontendDist)' as '$(FrontendResourcePrefix)*'." />
 
   </Target>
 
