@@ -65,6 +65,27 @@
     <ProjectReference Include="..\..\..\Hermod\Hermod\Hermod.csproj" Condition="!Exists('..\..\libs\Hermod\Hermod\Hermod.csproj')" />
   </ItemGroup>
 
+  <!--
+    SkipFrontendBuild is this project's alone, and it stops here.
+
+    XMPPWebApp.Tests sets it as a global property, and a global property
+    travels to every project below: Ratatoskr, Hermod and Styx each became a
+    second project instance with the same output path as the first. Once
+    both had to compile - after a clean - they wrote the same DLL at the same
+    time, and a solution build failed one run in two (CS2012, CS0006).
+
+    An item definition rather than an attribute on the four references above,
+    because those are not all the references there are: the SDK adds the
+    references of Ratatoskr and Hermod - Styx among them - as references of
+    this project, and an attribute on the four would not reach those. Nothing
+    below reads the property, so removing it changes nothing but the count.
+  -->
+  <ItemDefinitionGroup>
+    <ProjectReference>
+      <GlobalPropertiesToRemove>SkipFrontendBuild</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+
 
   <!--
     Frontend integration
