@@ -571,9 +571,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// own whose carbon we received.
         /// </summary>
         /// <remarks>
-        /// <paramref name="Identity"/> is not this application encrypting: it
-        /// sends in the clear. It is the carbon of another device of our own
-        /// that did, and the line says so rather than looking like one of ours.
+        /// <paramref name="Identity"/> is set for a line that went encrypted,
+        /// whichever device sent it: here it is Known, because a message has
+        /// just gone through a session with that device; on the carbon of
+        /// another device of ours it is how that device's key stood when its
+        /// line arrived here. Null for a line that went in the clear - the
+        /// lock on a line says how that line travelled, and nothing else.
         /// </remarks>
         public ChatMessage AddOutgoing(JID                  Chat,
                                        String               MessageId,

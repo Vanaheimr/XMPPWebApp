@@ -821,9 +821,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// the library compared against it (XEP-0420) - the outer one anybody
         /// can write.
         ///
-        /// <b>What arrives here is poorer than what the ordinary path gets.</b>
-        /// The decrypting side of Ratatoskr builds its message without the
-        /// delivered-late stamp of XEP-0203 and without the correction id of
+        /// <b>An answer is an answer here too.</b> The library reads the
+        /// reference and the marking of the quotation from inside the envelope
+        /// (XEP-0420) - and only from there, because the stanza around it is
+        /// anybody's to rewrite - so the line keeps Text, RepliesTo and Quote
+        /// apart exactly as a plain one does.
+        ///
+        /// <b>What arrives here is still poorer than what the ordinary path
+        /// gets.</b> The decrypting side of Ratatoskr builds its message without
+        /// the delivered-late stamp of XEP-0203 and without the correction id of
         /// XEP-0308, so an encrypted message that was held shows the time it
         /// arrived, and an encrypted correction becomes a second line instead of
         /// replacing the first. That is a gap in the library and not something
@@ -865,10 +871,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 Chats.AddOutgoing(
                     chat,
                     Message.MessageId ?? Guid.NewGuid().ToString("N"),
-                    Message.Body,
+                    Message.Text,
                     now,
-                    Carbon:    true,
-                    Identity:  Omemo.IdentityCheck
+                    Carbon:     true,
+                    Identity:   Omemo.IdentityCheck,
+                    RepliesTo:  Message.RepliesTo?.Id,
+                    Quote:      Message.Quote
                 );
 
                 return;
@@ -879,9 +887,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 chat,
                 Message.From.ToString(),
                 Message.MessageId,
-                Message.Body,
+                Message.Text,
                 now,
-                Identity:  Omemo.IdentityCheck
+                Identity:   Omemo.IdentityCheck,
+                RepliesTo:  Message.RepliesTo?.Id,
+                Quote:      Message.Quote
             );
 
         }
@@ -1212,13 +1222,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (String.IsNullOrEmpty(Carbon.Body))
                 return;
 
+            // XEP-0461: Text and not Body, for the reason HandleMessage gives -
+            // an answer written on another device of ours carries its
+            // quotation like any other, and it belongs beside the text and not
+            // in it.
             if (Carbon.IsSent)
                 Chats.AddOutgoing(
                     Carbon.OriginalTo.Bare,
                     Carbon.MessageId ?? Guid.NewGuid().ToString("N"),
-                    Carbon.Body,
+                    Carbon.Text ?? Carbon.Body,
                     new DateTimeOffset(Carbon.ReceivedAt),
-                    Carbon:  true
+                    Carbon:     true,
+                    RepliesTo:  Carbon.RepliesTo?.Id,
+                    Quote:      Carbon.Quote
                 );
 
             else
@@ -1226,9 +1242,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     Carbon.OriginalFrom.Bare,
                     Carbon.OriginalFrom.ToString(),
                     Carbon.MessageId,
-                    Carbon.Body,
+                    Carbon.Text ?? Carbon.Body,
                     new DateTimeOffset(Carbon.ReceivedAt),
-                    Carbon:  true
+                    Carbon:     true,
+                    RepliesTo:  Carbon.RepliesTo?.Id,
+                    Quote:      Carbon.Quote
                 );
 
         }

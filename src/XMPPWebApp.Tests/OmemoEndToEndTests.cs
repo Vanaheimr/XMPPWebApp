@@ -561,6 +561,106 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AnEncryptedAnswer_IsAnAnswerBothWays()
+
+        /// <summary>
+        /// XEP-0461 under OMEMO, in both directions: an encrypted answer that
+        /// arrives keeps its quotation beside its text, and one this app sends
+        /// carries its reference where only the reader can see it.
+        /// </summary>
+        /// <remarks>
+        /// Until now an encrypted answer came in as one line with the quoted
+        /// lines in the middle of its text, and went out as quoted lines with
+        /// no reference at all - the library neither read the &lt;reply/&gt;
+        /// from inside the envelope nor put one there.
+        /// </remarks>
+        [Test]
+        public async Task AnEncryptedAnswer_IsAnAnswerBothWays()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                var me    = JID.Parse($"me@{xmpp!.Domain}");
+                var peer  = JID.Parse($"alice@{xmpp.Domain}");
+
+                // Alice asks, the app answers.
+                var asked = await alice.SendEncryptedMessageAsync(me, "Shall we meet at eight?");
+
+                await Until(() => Message()?.Body == "Shall we meet at eight?", "her question in the chat store");
+
+                var question = Message()!;
+
+                XMPPMessage? atAlice = null;
+                alice.OnEncryptedMessage += (timestamp, sender, message, _, ct) => { atAlice = message; return Task.CompletedTask; };
+
+                var (sent, refusal) = await api.SendToAsync(peer, "Eight is fine", question);
+
+                Assert.That(sent, Is.Not.Null, refusal);
+
+                var answer = sent!;
+
+                await Until(() => atAlice is not null, "the answer at Alice");
+
+                // And Alice answers the answer.
+                await alice.SendEncryptedReplyAsync(me,
+                                                    "See you there",
+                                                    answer.Id,
+                                                    me,
+                                                    quotedText: "Eight is fine");
+
+                await Until(() => Message()?.Body == "See you there", "her answer in the chat store");
+
+                var hers     = Message()!;
+
+                var messages = xmpp.Sessions
+                                   .SelectMany(session => session.Received.Concat(session.Sent))
+                                   .Where     (frame   => frame.StartsWith("<message", StringComparison.Ordinal))
+                                   .ToList();
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(question.Id,            Is.EqualTo(asked.MessageId));
+
+                    Assert.That(answer.Encrypted,       Is.True);
+                    Assert.That(answer.RepliesTo,       Is.EqualTo(question.Id));
+
+                    Assert.That(atAlice!.RepliesTo?.Id, Is.EqualTo(question.Id),
+                                "The encrypted answer from here arrived as one that answers nothing.");
+                    Assert.That(atAlice.Text,           Is.EqualTo("Eight is fine"));
+                    Assert.That(atAlice.Quote,          Is.EqualTo("> Shall we meet at eight?\n"));
+
+                    Assert.That(hers.Encrypted,         Is.True);
+                    Assert.That(hers.RepliesTo,         Is.EqualTo(answer.Id),
+                                "Her encrypted answer arrived here as one that answers nothing.");
+                    Assert.That(hers.Quote,             Is.EqualTo("> Eight is fine\n"),
+                                "The quotation of her answer was left in its text.");
+
+                    Assert.That(messages.Any(frame => frame.Contains("urn:xmpp:reply:0", StringComparison.Ordinal)),
+                                Is.False,
+                                "A reference stood beside the encryption, in the clear.");
+
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        #endregion
+
         #region WritingToSomebodyWithoutOmemo_GoesOutInTheClear()
 
         /// <summary>

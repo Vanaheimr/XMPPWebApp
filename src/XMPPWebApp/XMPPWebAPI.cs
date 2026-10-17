@@ -1192,13 +1192,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             try
             {
 
-                // Encrypted, an answer is its quotation inside the envelope
-                // and no reference: the <reply/> would sit outside the
-                // encryption and tell anybody watching who answered whom.
+                // Encrypted, the reference and the quotation's marking go
+                // inside the envelope: beside it the <reply/> would tell
+                // anybody watching who answered whom.
                 if (canEncrypt)
                 {
 
-                    var sent = await client.SendEncryptedRoomMessageAsync(jid, quote + body);
+                    var sent = answered is null
+
+                                   ? await client.SendEncryptedRoomMessageAsync(jid, body)
+
+                                   : await client.SendEncryptedRoomReplyAsync(
+                                               jid,
+                                               body,
+                                               answered.RetractableId!,
+                                               replyToAuthor:  JID.TryParse($"{jid.Bare}/{answered.Nick}", out var occupant)
+                                                                   ? occupant
+                                                                   : null,
+                                               quotedText:     quote.Length > 0 ? answered.Body : null,
+                                               quotedAuthor:   answered.Nick
+                                           );
 
                     if (!sent.Sent)
                         return ErrorJSON(Request, HTTPStatusCode.Conflict,
@@ -1789,9 +1802,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                      "Say the line again, or take it back.");
 
                 // XEP-0308, section 5: every correction names the original
-                // line, a correction of a correction included - which is why
-                // the library's own CorrectLastMessageAsync, which names the
-                // stanza it sent last, is not used here.
+                // line, a correction of a correction included. Named here from
+                // the line on screen rather than through the library's
+                // CorrectLastMessageAsync, whose memory of what it sent ends
+                // with the process.
                 await Client!.Connection.SendMessageAsync(jid, body, corrects: line.Id);
 
                 return JSONResponse(Request, HTTPStatusCode.OK,
@@ -1870,14 +1884,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// nobody could open was not delivered, so sending it again in the clear
         /// duplicates nothing.
         ///
-        /// <b>An answer travels two ways, depending on the lane.</b> In the
-        /// clear it is a proper XEP-0461 reply: the reference, and the quoted
-        /// lines marked as fallback. Encrypted it is only the quoted lines in
-        /// front of the answer, inside the envelope, and no reference at all -
-        /// the &lt;reply/&gt; would sit outside the encryption and tell anybody
-        /// watching the connection who answered whom. What the far side shows
-        /// is then what every client shows for a quotation; what this side
-        /// keeps is the same line either way.
+        /// <b>An answer is a proper XEP-0461 reply in either lane</b>: the
+        /// reference, and the quoted lines marked as fallback. Encrypted, both
+        /// go inside the envelope next to the body (XEP-0420) - beside the
+        /// &lt;encrypted/&gt; the &lt;reply/&gt; would tell anybody watching the
+        /// connection who answered whom. What this side keeps is the same line
+        /// either way.
         /// </remarks>
         /// <param name="Jid">The far end.</param>
         /// <param name="Body">What was typed.</param>
@@ -1903,6 +1915,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                           ? ""
                                           : MessageReply.Quote(Answering.Body);
 
+            // Who wrote the line being answered: this account, or the far end
+            // under the address it wrote from.
+            JID? author             = Answering is null                                   ? null
+                                    : Answering.Direction == MessageDirection.Outgoing    ? client.BareJid
+                                    : JID.TryParse(Answering.From, out var from)          ? from
+                                    :                                                       Jid;
+
             String               messageId;
             OmemoIdentityCheck?  identity  = null;
 
@@ -1913,12 +1932,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                        : client.SendReplyAsync(Jid,
                                                Body,
                                                Answering.Id,
-                                               Answering.Direction == MessageDirection.Outgoing
-                                                   ? client.BareJid
-                                                   : JID.TryParse(Answering.From, out var author)
-                                                         ? author
-                                                         : Jid,
+                                               author,
                                                quotedText: quote.Length > 0 ? Answering.Body : null);
+
+            Task<OmemoSent> SendEncrypted()
+
+                => Answering is null
+                       ? client.SendEncryptedMessageAsync(Jid, Body)
+                       : client.SendEncryptedReplyAsync(Jid,
+                                                        Body,
+                                                        Answering.Id,
+                                                        author,
+                                                        quotedText: quote.Length > 0 ? Answering.Body : null);
 
             switch (HowToSend(client.OmemoEnabled, turnedOff, wasEncryptedBefore))
             {
@@ -1926,7 +1951,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 case Delivery.Encrypted:
                 {
 
-                    var sent = await client.SendEncryptedMessageAsync(Jid, quote + Body);
+                    var sent = await SendEncrypted();
 
                     if (sent.Readable)
                     {
