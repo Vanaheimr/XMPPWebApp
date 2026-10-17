@@ -277,6 +277,93 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AnAnswer_KeepsWhatItAnswers()
+
+        /// <summary>
+        /// XEP-0461: the quotation is taken out of the body, so this line is
+        /// the only place it is kept - in the archive and on its way to the
+        /// browser alike.
+        /// </summary>
+        /// <remarks>
+        /// A plain line names both as null rather than leaving them out. The
+        /// page reads a missing field as undefined, which is not null, and took
+        /// the length of it.
+        /// </remarks>
+        [Test]
+        public async Task AnAnswer_KeepsWhatItAnswers()
+        {
+
+            var answer = Incoming(alice, "m2", "Eight is fine", september) with {
+                             RepliesTo = "m1",
+                             Quote     = "> Shall we meet at eight?\n"
+                         };
+
+            var plain  = Incoming(alice, "m3", "See you", september.AddMinutes(1)).ToJSON();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(plain.ContainsKey("repliesTo"),  Is.True);
+                Assert.That(plain.ContainsKey("quote"),      Is.True);
+                Assert.That(plain["repliesTo"]!.Type,        Is.EqualTo(JTokenType.Null));
+                Assert.That(plain["quote"]!.Type,            Is.EqualTo(JTokenType.Null));
+            });
+
+            await using (var archive = Open())
+            {
+                archive.Record(answer);
+                await archive.FlushAsync();
+            }
+
+            await using var reading  = Open();
+            var             messages = reading.Load(alice, september.AddDays(-1));
+
+            Assert.That(messages, Has.Count.EqualTo(1));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(messages[0].Body,       Is.EqualTo("Eight is fine"));
+                Assert.That(messages[0].RepliesTo,  Is.EqualTo("m1"));
+                Assert.That(messages[0].Quote,      Is.EqualTo("> Shall we meet at eight?\n"));
+            });
+
+        }
+
+        #endregion
+
+        #region ATakenBackLine_StaysTakenBack()
+
+        /// <summary>
+        /// XEP-0424: the emptied line is appended like any other change, and
+        /// as the last word about the message it is what comes back. Without
+        /// the mark it would come back as an empty line that reads like one
+        /// that failed.
+        /// </summary>
+        [Test]
+        public async Task ATakenBackLine_StaysTakenBack()
+        {
+
+            await using (var archive = Open())
+            {
+                archive.Record(Incoming(alice, "m1", "Oops", september));
+                archive.Record(Incoming(alice, "m1", "",     september) with { Retracted = true });
+                await archive.FlushAsync();
+            }
+
+            await using var reading  = Open();
+            var             messages = reading.Load(alice, september.AddDays(-1));
+
+            Assert.That(messages, Has.Count.EqualTo(1));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(messages[0].Body,       Is.Empty);
+                Assert.That(messages[0].Retracted,  Is.True);
+            });
+
+        }
+
+        #endregion
+
         #region TheSameLineTwice_IsWrittenOnce()
 
         [Test]

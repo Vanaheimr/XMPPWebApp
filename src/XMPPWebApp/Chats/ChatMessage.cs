@@ -236,6 +236,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                    new JProperty("delayed",    Delayed),
                    new JProperty("carbon",     Carbon),
                    new JProperty("corrects",   Corrects),
+                   new JProperty("repliesTo",  RepliesTo),
+                   new JProperty("quote",      Quote),
                    new JProperty("corrected",  Corrected),
                    new JProperty("retracted",  Retracted),
                    new JProperty("delivered",  Delivered),
@@ -291,9 +293,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                           timestamp,
                           JSON.Value<Boolean?>("delayed")   ?? false,
                           JSON.Value<Boolean?>("carbon")    ?? false,
-                          JSON.Value<String>  ("corrects")
+                          JSON.Value<String>  ("corrects"),
+                          JSON.Value<String>  ("repliesTo"),
+                          JSON.Value<String>  ("quote")
                       ) {
                           Corrected  = JSON.Value<Boolean?>("corrected") ?? false,
+                          Retracted  = JSON.Value<Boolean?>("retracted") ?? false,
                           Delivered  = JSON.Value<Boolean?>("delivered") ?? false,
                           Displayed  = JSON.Value<Boolean?>("displayed") ?? false,
                           Identity   = TryParseIdentity(JSON.Value<String>("identity")),
