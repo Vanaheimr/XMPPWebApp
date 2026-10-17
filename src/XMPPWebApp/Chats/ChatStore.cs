@@ -252,6 +252,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+        #region Find(Chat, MessageId)
+
+        /// <summary>
+        /// One line of a conversation by its id, or null when the conversation
+        /// does not hold it - which says nothing about the archive, where an
+        /// older line may still be.
+        /// </summary>
+        public ChatMessage? Find(JID     Chat,
+                                 String  MessageId)
+        {
+            lock (@lock)
+            {
+
+                if (!chats.TryGetValue(Chat.Bare, out var conversation))
+                    return null;
+
+                return conversation.Messages.FirstOrDefault(message => message.Id == MessageId);
+
+            }
+        }
+
+        #endregion
+
         #region Clear()
 
         /// <summary>
@@ -406,30 +429,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         #region AddOutgoing(Chat, MessageId, Body, Timestamp, Carbon = false, Identity = null)
 
         /// <summary>
-        /// A message that went out - from here, or from another device of our
-        /// own whose carbon we received.
-        /// </summary>
-        /// <remarks>
-        /// <paramref name="Identity"/> is not this application encrypting: it
-        /// sends in the clear. It is the carbon of another device of our own
-        /// that did, and the line says so rather than looking like one of ours.
-        /// </remarks>
-        /// <summary>
-        /// XEP-0308: replaces the text of the last line this app sent here.
-        /// </summary>
-        /// <returns>
-        /// The corrected line, or null when nothing has gone out here yet.
-        /// </returns>
-        /// <remarks>
-        /// <b>The line keeps its place and its time.</b> A correction is not a
-        /// new thing said later; it is the same thing said properly, and moving
-        /// it to the bottom would put it after answers to it.
-        ///
-        /// The id changes, because the correction is a stanza of its own and is
-        /// what a further correction has to name. Whoever mistypes also
-        /// mistypes in the correction.
-        /// </remarks>
-        /// <summary>
         /// XEP-0424: takes back a line, on the far end's request.
         /// </summary>
         /// <returns>
@@ -468,8 +467,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 if (index < 0)
                     return null;
 
+                // The quotation goes with the words: it was part of what was
+                // said, and what was taken back was all of it.
                 var taken = conversation.Messages[index] with {
                                 Body       = "",
+                                Quote      = null,
                                 Retracted  = true
                             };
 
@@ -481,9 +483,31 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             }
         }
 
-        public ChatMessage? CorrectLastOutgoing(JID     Chat,
-                                                String  MessageId,
-                                                String  Body)
+        /// <summary>
+        /// XEP-0308: replaces the text of a line this app sent here.
+        /// </summary>
+        /// <param name="Chat">The conversation.</param>
+        /// <param name="MessageId">The line - see <see cref="LastOwnLine"/> for which one may be corrected.</param>
+        /// <param name="Body">The complete new text.</param>
+        /// <returns>
+        /// The corrected line, or null when there is no line of ours by that
+        /// name that could be corrected.
+        /// </returns>
+        /// <remarks>
+        /// <b>The line keeps its place and its time.</b> A correction is not a
+        /// new thing said later; it is the same thing said properly, and moving
+        /// it to the bottom would put it after answers to it.
+        ///
+        /// <b>And it keeps its id.</b> XEP-0308 has been plain about it since
+        /// 1.1.0: what is replaced is the payload, not the identity of the
+        /// message, and a second correction names the original again. A line
+        /// that took the id of the correction stanza was, to everything keyed
+        /// by id, a new line - the page showed it below the old one, and the
+        /// archive read both back after every restart.
+        /// </remarks>
+        public ChatMessage? CorrectOutgoing(JID     Chat,
+                                            String  MessageId,
+                                            String  Body)
         {
             lock (@lock)
             {
@@ -491,14 +515,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 if (!chats.TryGetValue(Chat.Bare, out var conversation))
                     return null;
 
-                var index = conversation.Messages.FindLastIndex(
-                                message => message.Direction == MessageDirection.Outgoing);
+                var index = conversation.Messages.FindIndex(message => message.Id == MessageId &&
+                                                                       IsOwnLine(message));
 
                 if (index < 0)
                     return null;
 
                 var corrected = conversation.Messages[index] with {
-                                    Id         = MessageId,
                                     Body       = Body,
                                     Corrected  = true
                                 };
@@ -511,12 +534,55 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             }
         }
 
+        /// <summary>
+        /// XEP-0308: the line a correction here would replace - the last one
+        /// this app said that still stands - or null when there is none.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not a carbon.</b> A line another device of our own sent is the
+        /// last thing that device said, and a correction from here would name
+        /// it while the far side expects corrections of it from there.
+        ///
+        /// <b>Not a line that was taken back.</b> Its words are gone, and a
+        /// correction would put new ones in its place under a mark that says
+        /// there are none.
+        /// </remarks>
+        public ChatMessage? LastOwnLine(JID Chat)
+        {
+            lock (@lock)
+            {
+
+                if (!chats.TryGetValue(Chat.Bare, out var conversation))
+                    return null;
+
+                return conversation.Messages.LastOrDefault(IsOwnLine);
+
+            }
+        }
+
+        private static Boolean IsOwnLine(ChatMessage Message)
+
+            => Message.Direction == MessageDirection.Outgoing &&
+               !Message.Carbon &&
+               !Message.Retracted;
+
+        /// <summary>
+        /// A message that went out - from here, or from another device of our
+        /// own whose carbon we received.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="Identity"/> is not this application encrypting: it
+        /// sends in the clear. It is the carbon of another device of our own
+        /// that did, and the line says so rather than looking like one of ours.
+        /// </remarks>
         public ChatMessage AddOutgoing(JID                  Chat,
                                        String               MessageId,
                                        String               Body,
                                        DateTimeOffset       Timestamp,
                                        Boolean              Carbon     = false,
-                                       OmemoIdentityCheck?  Identity   = null)
+                                       OmemoIdentityCheck?  Identity   = null,
+                                       String?              RepliesTo  = null,
+                                       String?              Quote      = null)
         {
             lock (@lock)
             {
@@ -533,7 +599,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                   "me",
                                   Body,
                                   Timestamp,
-                                  Carbon:  Carbon
+                                  Carbon:     Carbon,
+                                  RepliesTo:  RepliesTo,
+                                  Quote:      Quote
                               ) {
                                   Identity = Identity
                               };

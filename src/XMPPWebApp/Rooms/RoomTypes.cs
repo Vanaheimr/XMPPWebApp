@@ -170,7 +170,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                    new JProperty("quote",      Quote),
                    new JProperty("private",    Private),
                    new JProperty("corrected",  Corrected),
-                   new JProperty("retracted",  Retracted)
+                   new JProperty("retracted",  Retracted),
+
+                   // XEP-0359: the name the room gave the line, which is what
+                   // an answer in it points at - so the page needs it both to
+                   // offer an answer at all and to find the line one is about.
+                   new JProperty("stanzaId",   RetractableId)
                );
 
     }

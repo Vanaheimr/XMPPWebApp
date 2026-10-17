@@ -1,11 +1,12 @@
 import { type Room, type RoomMessage } from '../api/client';
+import { lineActions, quotation, showLine } from '../chat/lines';
 import { renderBody } from '../chat/links';
 import { store, type StoreEvent } from '../chat/store';
 import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
 import { lock, occupantRow, roomIcon } from '../rooms/parts';
 import { roomPreview } from '../rooms/text';
-import { errorMessage, formatDay, formatListTime, formatTime, sameDay } from '../ui';
+import { errorMessage, excerpt, formatDay, formatListTime, formatTime, sameDay } from '../ui';
 
 // XEP-0045: the room view.
 //
@@ -70,6 +71,8 @@ export const roomsPage: Page = {
 
                     <div id="messages" class="messages" aria-live="polite"></div>
 
+                    <div id="composer-context" class="composer-context" hidden></div>
+
                     <form id="composer" class="composer">
                         <textarea name="body" rows="1" placeholder="Say something …" aria-label="Message"></textarea>
                         <button type="button" id="unsay" class="btn small danger" hidden
@@ -105,6 +108,7 @@ class RoomView {
     private readonly banner:     HTMLElement;
     private readonly messages:   HTMLElement;
     private readonly occupants:  HTMLElement;
+    private readonly context:    HTMLElement;
     private readonly composer:   HTMLFormElement;
     private readonly textarea:   HTMLTextAreaElement;
     private readonly unsay:      HTMLButtonElement;
@@ -115,9 +119,19 @@ class RoomView {
     private current:  string | null = null;
     private drawn:    string | null = null;
 
-    /** XEP-0308: whether the box holds a line being said again properly. */
     /** XEP-0308/0424: the id of the line in the box, or null when it is new. */
     private editing:  string | null = null;
+
+    /** What was in the box before an edit took it over, to be put back afterwards. */
+    private draftBeforeEdit = '';
+
+    /** XEP-0461: the line the box answers, or null. */
+    private replyingTo:  RoomMessage | null = null;
+
+    /** The line a tap picked, whose buttons show where nothing hovers. */
+    private picked:   string | null = null;
+
+    private sending   = false;
 
     constructor(private readonly root: HTMLElement) {
 
@@ -127,6 +141,7 @@ class RoomView {
         this.banner     = must<HTMLElement>(root, '#banner');
         this.messages   = must<HTMLElement>(root, '#messages');
         this.occupants  = must<HTMLElement>(root, '#occupants');
+        this.context    = must<HTMLElement>(root, '#composer-context');
         this.composer   = must<HTMLFormElement>(root, '#composer');
         this.textarea   = must<HTMLTextAreaElement>(this.composer, 'textarea');
         this.unsay      = must<HTMLButtonElement>(this.composer, '#unsay');
@@ -157,17 +172,15 @@ class RoomView {
             // XEP-0308: up-arrow in an empty box takes back the last line said
             // here, to be said properly. Sending it then corrects rather than
             // repeats — which is the whole point, because the wrong word is
-            // standing in front of everybody until it is replaced.
+            // standing in front of everybody until it is replaced. The pencil
+            // on that line does the same.
             if (event.key === 'ArrowUp' && this.textarea.value.length === 0) {
 
-                const mine = this.lastOwnLine();
+                const mine = this.editableLine();
 
                 if (mine !== null) {
                     event.preventDefault();
-                    this.textarea.value  = mine.body;
-                    this.editing         = mine.id;
-                    this.composer.classList.add('editing');
-                    this.unsay.hidden    = false;
+                    this.startEditing(mine);
                 }
 
                 return;
@@ -175,10 +188,19 @@ class RoomView {
             }
 
             // And out again, with the box as it was.
-            if (event.key === 'Escape' && this.editing)
-                this.stopEditing();
+            if (event.key === 'Escape') {
+                if (this.editing !== null)
+                    this.stopEditing();
+                else if (this.replyingTo !== null)
+                    this.stopReplying();
+            }
 
         });
+
+        // One listener for every line, because the lines are drawn again with
+        // every one that arrives: the buttons on a line, the quotation in it,
+        // and a tap that shows the buttons on a screen nothing hovers over.
+        this.messages.addEventListener('click', event => this.onMessageClick(event));
 
         this.list.addEventListener('click', event => {
 
@@ -206,8 +228,27 @@ class RoomView {
 
     select(jid: string | null): void {
 
+        // Both belong to the room they were started in: an edit sent in the
+        // next one would replace a line there, and an answer would point at a
+        // line that is not in it.
+        if (jid !== this.current) {
+
+            if (this.editing !== null)
+                this.stopEditing();
+
+            if (this.replyingTo !== null)
+                this.stopReplying();
+
+            this.picked = null;
+
+        }
+
         this.current = jid;
         this.drawn   = null;
+
+        // On a phone the list and the room take turns, and this is what says
+        // whose turn it is - without it a room chosen there was never shown.
+        this.root.classList.toggle('open', jid !== null);
 
         document.title = TITLE;
 
@@ -286,6 +327,18 @@ class RoomView {
         const room = this.current !== null ? store.rooms.get(this.current) : undefined;
 
         this.composer.hidden = room === undefined || room.state !== 'joined';
+
+        // Nothing to answer into and nothing to correct with, so the strip
+        // that says what sending would do goes with the box.
+        if (this.composer.hidden) {
+
+            if (this.editing !== null)
+                this.stopEditing();
+
+            if (this.replyingTo !== null)
+                this.stopReplying();
+
+        }
 
     }
 
@@ -431,6 +484,8 @@ class RoomView {
 
         let previous: RoomMessage | null = null;
 
+        const editable = this.editableLine()?.id ?? null;
+
         const parts = messages.map(message => {
 
             const day = previous === null ||
@@ -442,7 +497,7 @@ class RoomView {
 
             return html`
                 ${day}
-                <div class="message ${message.mine ? 'out' : 'in'} ${message.delayed ? 'delayed' : ''} ${message.private ? 'private' : ''}" data-id="${message.id}">
+                <div class="message ${message.mine ? 'out' : 'in'} ${message.delayed ? 'delayed' : ''} ${message.private ? 'private' : ''} ${message.id === editable ? 'editable' : ''} ${message.id === this.picked ? 'active' : ''}" data-id="${message.id}">
                     <div class="meta">
                         <span class="nick">${message.nick}</span>
                         <span class="time">${formatTime(message.timestamp)}</span>
@@ -457,6 +512,10 @@ class RoomView {
                               ? html`<span class="taken-back" title="XEP-0424: the sender took this back. The archive may still hold it.">taken back</span>`
                               : ''}
                     </div>
+                    ${message.quote !== null && message.quote.length > 0 && !message.retracted
+                          ? html`<blockquote class="quote ${message.repliesTo !== null ? 'linked' : ''}"
+                                             title="${message.repliesTo !== null ? 'Show the message this answers' : ''}">${quotation(message.quote)}</blockquote>`
+                          : ''}
                     <div class="body-slot" data-body="${message.id}"></div>
                 </div>
             `;
@@ -466,10 +525,21 @@ class RoomView {
         render(this.messages, html`${parts}`);
 
         // The body goes in as nodes rather than as markup: a link becomes a
-        // link only by the rules in chat/links.ts, which validate the URL.
+        // link only by the rules in chat/links.ts, which validate the URL. The
+        // buttons go in the same way, last, so that where they become a row of
+        // the line - on a phone - that row is at its foot.
         for (const message of messages) {
+
             const slot = this.messages.querySelector<HTMLElement>(`[data-body="${cssEscape(message.id)}"]`);
+
             slot?.replaceChildren(renderBody(message.body));
+
+            const reply = answerable(message);
+            const edit  = message.mine && !message.private && !message.retracted;
+
+            if (reply || edit)
+                slot?.parentElement?.appendChild(lineActions({ reply, edit }));
+
         }
 
         if (atBottom || this.drawn !== jid)
@@ -573,27 +643,211 @@ class RoomView {
 
     }
 
-    /** The last line this app said in the room on screen, or null. */
-    private lastOwnLine(): RoomMessage | null {
+    /**
+     * XEP-0308: the line an edit would replace, or null.
+     *
+     * The rule the server applies - the last line said from here that still
+     * stands, and not a private one - and then null for the one it refuses: a
+     * line that went encrypted, whose correction could only go out in the
+     * clear.
+     */
+    private editableLine(): RoomMessage | null {
 
         if (this.current === null)
             return null;
 
         const lines = store.roomMessages.get(this.current) ?? [];
 
-        for (let i = lines.length - 1; i >= 0; i--)
-            if (lines[i].mine && !lines[i].retracted)
-                return lines[i];
+        for (let i = lines.length - 1; i >= 0; i--) {
+
+            const line = lines[i];
+
+            if (!line.mine || line.retracted || line.private)
+                continue;
+
+            return line.encrypted ? null : line;
+
+        }
 
         return null;
 
     }
 
+    private lineById(id: string): RoomMessage | null {
+
+        if (this.current === null)
+            return null;
+
+        return (store.roomMessages.get(this.current) ?? []).find(line => line.id === id) ?? null;
+
+    }
+
+    /** XEP-0308: puts a line into the box, to be said properly. */
+    private startEditing(line: RoomMessage): void {
+
+        if (this.replyingTo !== null)
+            this.stopReplying();
+
+        if (this.editing === null)
+            this.draftBeforeEdit = this.textarea.value;
+
+        this.editing         = line.id;
+        this.textarea.value  = line.body;
+        this.composer.classList.add('editing');
+        this.unsay.hidden    = false;
+
+        this.renderContext();
+        this.textarea.focus();
+
+    }
+
+    /** Ends an edit, and gives the box back what it held before. */
     private stopEditing(): void {
-        this.editing         = null;
-        this.textarea.value  = '';
+        this.editing          = null;
+        this.textarea.value   = this.draftBeforeEdit;
+        this.draftBeforeEdit  = '';
         this.composer.classList.remove('editing');
-        this.unsay.hidden    = true;
+        this.unsay.hidden     = true;
+        this.renderContext();
+    }
+
+    /**
+     * XEP-0461: the next line said here answers this one. What is in the box
+     * stays - whoever starts typing and then decides it is an answer should
+     * not have to type it again.
+     */
+    private startReplying(line: RoomMessage): void {
+
+        if (this.editing !== null)
+            this.stopEditing();
+
+        this.replyingTo = line;
+
+        this.renderContext();
+        this.textarea.focus();
+
+    }
+
+    private stopReplying(): void {
+        this.replyingTo = null;
+        this.renderContext();
+    }
+
+    /**
+     * The strip above the box that says what sending will do: answer a line,
+     * or replace one. Without it the box looks the same either way, and Enter
+     * does something different from what it seems to - in front of everybody.
+     */
+    private renderContext(): void {
+
+        const editing  = this.editing !== null;
+        const line     = editing ? this.lineById(this.editing!) : this.replyingTo;
+
+        this.composer.classList.toggle('replying', !editing && line !== null);
+
+        if (line === null) {
+            this.context.hidden = true;
+            this.context.replaceChildren();
+            return;
+        }
+
+        render(this.context, html`
+            <i class="fa-solid ${editing ? 'fa-pen' : 'fa-reply'}" aria-hidden="true"></i>
+            <div class="context-text">
+                <div class="context-label">${editing ? 'Editing your message' : `Replying to ${line.mine ? 'yourself' : line.nick}`}</div>
+                <div class="context-line">${excerpt(line)}</div>
+            </div>
+            <button type="button" class="btn small" title="Cancel (Esc)" aria-label="Cancel"><i class="fa-solid fa-xmark"></i></button>
+        `);
+
+        this.context.hidden = false;
+
+        must<HTMLButtonElement>(this.context, 'button').addEventListener('click', () => {
+            if (editing)
+                this.stopEditing();
+            else
+                this.stopReplying();
+            this.textarea.focus();
+        });
+
+    }
+
+    private onMessageClick(event: MouseEvent): void {
+
+        if (!(event.target instanceof Element))
+            return;
+
+        const target   = event.target;
+        const element  = target.closest<HTMLElement>('.message');
+        const line     = element?.dataset.id !== undefined ? this.lineById(element.dataset.id) : null;
+
+        if (element === null || line === null)
+            return;
+
+        switch (target.closest<HTMLButtonElement>('.actions button')?.dataset.action) {
+
+            case 'reply':
+                this.unpick();
+                this.startReplying(line);
+                return;
+
+            case 'edit':
+                this.unpick();
+                this.startEditing(line);
+                return;
+
+        }
+
+        if (line.repliesTo !== null && target.closest('.quote') !== null) {
+            this.showAnswered(line.repliesTo);
+            return;
+        }
+
+        // Links, players and a selection in progress keep their click.
+        if (target.closest('a, button, audio, video') !== null || window.getSelection()?.isCollapsed === false)
+            return;
+
+        // A tap picks the line, so its buttons show where nothing hovers; a
+        // second tap, or a tap on another line, puts them away again. Kept by
+        // id, because the next line to arrive draws the room again.
+        const picked = this.picked === line.id;
+
+        this.unpick();
+
+        if (!picked) {
+            this.picked = line.id;
+            element.classList.add('active');
+        }
+
+    }
+
+    private unpick(): void {
+
+        this.picked = null;
+
+        for (const active of this.messages.querySelectorAll('.message.active'))
+            active.classList.remove('active');
+
+    }
+
+    /**
+     * XEP-0461: the line an answer is about, brought into view. Found by the
+     * name the room gave it, which is what an answer in a room points at.
+     */
+    private showAnswered(stanzaId: string): void {
+
+        const line     = (store.roomMessages.get(this.current ?? '') ?? []).find(candidate => candidate.stanzaId === stanzaId);
+        const element  = line !== undefined
+                             ? this.messages.querySelector<HTMLElement>(`.message[data-id="${cssEscape(line.id)}"]`)
+                             : null;
+
+        if (element === null) {
+            this.toast('info', 'The message this answers is further back than what is loaded here.');
+            return;
+        }
+
+        showLine(element);
+
     }
 
     /**
@@ -627,22 +881,45 @@ class RoomView {
         const jid       = this.current;
         const body      = this.textarea.value.trim();
         const editing   = this.editing !== null;
+        const answers   = this.replyingTo;
 
-        if (jid === null || body.length === 0)
+        if (jid === null || body.length === 0 || this.sending)
             return;
 
-        this.textarea.value = '';
-        this.stopEditing();
+        this.sending = true;
 
         try {
-            await (editing ? store.correctInRoom(jid, body) : store.sendToRoom(jid, body));
+
+            if (editing) {
+
+                await store.correctInRoom(jid, body);
+
+                // What was in the box before the edit comes back.
+                this.stopEditing();
+
+            }
+            else {
+
+                await store.sendToRoom(jid, body, answers?.id);
+
+                if (this.replyingTo === answers)
+                    this.stopReplying();
+
+                this.textarea.value = '';
+
+            }
+
         }
         catch (error) {
-            // Put back what was typed. A refusal here usually means somebody
+            // The sentence stays in the box, and so does what it was to be -
+            // an answer, or a correction. A refusal here usually means somebody
             // walked in whose address has not arrived, and the answer is to try
-            // again in a moment - not to lose the sentence.
-            this.textarea.value = body;
+            // again in a moment - not to lose the sentence, nor to send it the
+            // second time as something else.
             this.toast('error', errorMessage(error));
+        }
+        finally {
+            this.sending = false;
         }
 
     }
@@ -663,8 +940,21 @@ class RoomView {
 
 
 /**
- * CSS.escape is not in every browser this has to run in, and the only place an
- * id reaches a selector here is the body slot below.
+ * XEP-0461: whether a line can be answered here.
+ *
+ * Not one taken back - there is nothing left to answer. Not a private word -
+ * the answer goes to the whole room and carries what it answers along. And not
+ * a line the room gave no name: the answer has to point at that name, and a
+ * line of ours only learns it from its reflection a moment after it was said.
+ */
+function answerable(line: RoomMessage): boolean {
+    return !line.retracted && !line.private && line.stanzaId !== null;
+}
+
+/**
+ * CSS.escape is not in every browser this has to run in, and the only places
+ * an id reaches a selector here are the body slot and the line an answer is
+ * about.
  */
 function cssEscape(value: string): string {
     return value.replace(/["\\]/gu, '\\$&');

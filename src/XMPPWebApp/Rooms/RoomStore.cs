@@ -404,27 +404,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
         #region AddIncoming(...) / AddOutgoing(...)
 
         /// <summary>
-        /// Somebody said something in a room.
-        /// </summary>
-        /// <param name="Nick">Their name in this room - all that everybody present shares.</param>
-        /// <param name="Delayed">
-        /// Whether it was held on the way, or came out of the room's history on
-        /// entering. <b>A delayed line does not count as unread</b>: what a room
-        /// sends when one walks in is not news.
-        /// </param>
-        /// <summary>
-        /// XEP-0308: replaces the text of the last line this app said in a room.
-        /// </summary>
-        /// <returns>
-        /// The corrected line, or null when nothing has been said here yet.
-        /// </returns>
-        /// <remarks>
-        /// <b>Ours, by the nickname this app holds.</b> The same rule the
-        /// incoming side follows and for the same reason: a correction belongs
-        /// to the occupant who wrote the line, and in a room that is all there
-        /// is to go by.
-        /// </remarks>
-        /// <summary>
         /// XEP-0424: takes back a line in a room, on its author's request.
         /// </summary>
         /// <remarks>
@@ -455,8 +434,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                 if (index < 0)
                     return null;
 
+                // The quotation goes with the words: it was part of what was
+                // said, and what was taken back was all of it.
                 var taken = room.Messages[index] with {
                                 Body       = "",
+                                Quote      = null,
                                 Retracted  = true
                             };
 
@@ -470,9 +452,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
             }
         }
 
-        public RoomMessage? CorrectLastOwn(JID     Jid,
-                                           String  MessageId,
-                                           String  Body)
+        /// <summary>
+        /// XEP-0308: the line a correction here would replace - the last one
+        /// this app said in the room that still stands - or null.
+        /// </summary>
+        /// <remarks>
+        /// <b>Ours, by the nickname this app holds.</b> The same rule the
+        /// incoming side follows and for the same reason: a correction belongs
+        /// to the occupant who wrote the line, and in a room that is all there
+        /// is to go by.
+        /// </remarks>
+        public RoomMessage? LastOwnLine(JID Jid)
         {
             lock (@lock)
             {
@@ -480,13 +470,48 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                 if (!rooms.TryGetValue(Jid.Bare, out var room))
                     return null;
 
-                var index = room.Messages.FindLastIndex(line => line.Nick == room.Nick);
+                return room.Messages.LastOrDefault(line => line.Mine &&
+                                                           line.Nick == room.Nick &&
+                                                           !line.Retracted &&
+                                                           !line.Private);
+
+            }
+        }
+
+        /// <summary>
+        /// XEP-0308: replaces the text of a line this app said in a room.
+        /// </summary>
+        /// <returns>
+        /// The corrected line, or null when there is no line of ours by that
+        /// name.
+        /// </returns>
+        /// <remarks>
+        /// <b>The line keeps its id</b>, for the reason a conversation's does:
+        /// XEP-0308 replaces the payload and not the identity of the message,
+        /// and a second correction names the original again. A line that took
+        /// the id of the correction stanza was a new line to everything keyed
+        /// by id - the page showed it twice, and the reflection of the next
+        /// correction named a line that was no longer there.
+        /// </remarks>
+        public RoomMessage? CorrectOwn(JID     Jid,
+                                       String  MessageId,
+                                       String  Body)
+        {
+            lock (@lock)
+            {
+
+                if (!rooms.TryGetValue(Jid.Bare, out var room))
+                    return null;
+
+                var index = room.Messages.FindIndex(line => line.Id   == MessageId &&
+                                                            line.Mine &&
+                                                            line.Nick == room.Nick &&
+                                                            !line.Retracted);
 
                 if (index < 0)
                     return null;
 
                 var corrected = room.Messages[index] with {
-                                    Id         = MessageId,
                                     Body       = Body,
                                     Corrected  = true
                                 };
@@ -501,6 +526,75 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
             }
         }
 
+        /// <summary>
+        /// One line of a room by its id, or null.
+        /// </summary>
+        public RoomMessage? Find(JID     Jid,
+                                 String  MessageId)
+        {
+            lock (@lock)
+                return rooms.TryGetValue(Jid.Bare, out var room)
+                           ? room.Messages.FirstOrDefault(line => line.Id == MessageId)
+                           : null;
+        }
+
+        /// <summary>
+        /// XEP-0359: the name the room gave one of our own lines, read off its
+        /// reflection.
+        /// </summary>
+        /// <returns>The line with its name, or null when there was nothing to learn.</returns>
+        /// <remarks>
+        /// <b>The only way a line of ours comes to have one.</b> The room names a
+        /// line on its way through, so the copy put into the store on sending
+        /// cannot know it - and it is the name an answer (XEP-0461) and a
+        /// retraction (XEP-0424) have to use in a room. Without it every line
+        /// this app said could be neither answered nor taken back.
+        ///
+        /// Only for a line of ours that has none yet: the reflection comes from
+        /// our own nickname, and a name once given does not change.
+        /// </remarks>
+        public RoomMessage? Named(JID     Jid,
+                                  String  MessageId,
+                                  String  Nick,
+                                  String  RoomId)
+        {
+            lock (@lock)
+            {
+
+                if (!rooms.TryGetValue(Jid.Bare, out var room))
+                    return null;
+
+                var index = room.Messages.FindIndex(line => line.Id   == MessageId &&
+                                                            line.Mine &&
+                                                            line.Nick == Nick &&
+                                                            line.RetractableId is null);
+
+                if (index < 0)
+                    return null;
+
+                var named = room.Messages[index] with {
+                                RetractableId = RoomId
+                            };
+
+                room.Messages[index] = named;
+
+                sequence++;
+                OnRoomMessage?.Invoke(sequence, named);
+
+                return named;
+
+            }
+        }
+
+        /// <summary>
+        /// Somebody said something in a room.
+        /// </summary>
+        /// <param name="Nick">Their name in this room - all that everybody present shares.</param>
+        /// <param name="Delayed">
+        /// Whether it was held on the way, or came out of the room's history on
+        /// entering. <b>A delayed line does not count as unread</b>: what a room
+        /// sends when one walks in is not news.
+        /// </param>
         public RoomMessage AddIncoming(JID             Jid,
                                        String          Nick,
                                        String?         MessageId,
@@ -619,7 +713,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                        String          MessageId,
                                        String          Body,
                                        DateTimeOffset  Timestamp,
-                                       Boolean         Encrypted)
+                                       Boolean         Encrypted,
+                                       String?         RepliesTo  = null,
+                                       String?         Quote      = null)
         {
             lock (@lock)
             {
@@ -635,8 +731,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Rooms
                                    Timestamp,
                                    false,
                                    Encrypted,
-                                   null,
-                                   null
+                                   RepliesTo,
+                                   Quote
                                );
 
                 Insert(room, message);

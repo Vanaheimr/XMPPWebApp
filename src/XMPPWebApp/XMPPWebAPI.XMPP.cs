@@ -606,7 +606,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                             message.To.Bare,
                             message.MessageId ?? entry.ArchiveId,
                             message.Text,
-                            entry.Timestamp
+                            entry.Timestamp,
+                            RepliesTo:  message.RepliesTo?.Id,
+                            Quote:      message.Quote
                         );
 
                     else
@@ -759,8 +761,21 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             // No resource means the room itself said something, which is not a
             // line anybody wrote.
-            if (nick is null || Rooms.Has(room, Message.MessageId))
+            if (nick is null)
                 return;
+
+            if (Rooms.Has(room, Message.MessageId))
+            {
+
+                // The reflection carries the one thing the line put in on
+                // sending cannot know: the name the room gave it (XEP-0359),
+                // which is what an answer and a retraction have to use here.
+                if (Message.RetractableId is String named)
+                    Rooms.Named(room, Message.MessageId!, nick, named);
+
+                return;
+
+            }
 
             Rooms.AddIncoming(
                 room,

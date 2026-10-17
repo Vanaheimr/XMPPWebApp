@@ -139,6 +139,67 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AnAnswerFromHere_KeepsWhatItAnswers()
+
+        /// <summary>
+        /// XEP-0461 from this side: the line that is answered is found by its
+        /// id, and the answer keeps the reference and the quotation beside its
+        /// own text - the same shape an answer from the far side has.
+        /// </summary>
+        [Test]
+        public void AnAnswerFromHere_KeepsWhatItAnswers()
+        {
+
+            var store    = new ChatStore();
+
+            store.AddIncoming(alice, "alice@example.org/phone", "m1", "Shall we meet at eight?", noon);
+
+            var answered = store.Find(alice, "m1");
+            var answer   = store.AddOutgoing(alice, "o1", "Eight is fine", noon.AddMinutes(1),
+                                             RepliesTo:  answered?.Id,
+                                             Quote:      "> Shall we meet at eight?\n");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(answered?.Body,     Is.EqualTo("Shall we meet at eight?"));
+                Assert.That(store.Find(alice, "nope"), Is.Null);
+                Assert.That(store.Find(bob,   "m1"),   Is.Null, "one conversation's line is not another's");
+                Assert.That(answer.Body,        Is.EqualTo("Eight is fine"), "the quotation stays out of the text");
+                Assert.That(answer.RepliesTo,   Is.EqualTo("m1"));
+                Assert.That(answer.Quote,       Is.EqualTo("> Shall we meet at eight?\n"));
+            });
+
+        }
+
+        #endregion
+
+        #region ATakenBackAnswer_KeepsNothingOfWhatItSaid()
+
+        /// <summary>
+        /// XEP-0424 on an answer: the quotation goes with the words, because it
+        /// was part of what was said.
+        /// </summary>
+        [Test]
+        public void ATakenBackAnswer_KeepsNothingOfWhatItSaid()
+        {
+
+            var store = new ChatStore();
+
+            store.AddIncoming(alice, "alice@example.org/phone", "m2", "Eight is fine", noon,
+                              RepliesTo: "o1", Quote: "> Shall we meet at eight?\n");
+
+            var taken = store.Retract(alice, "m2", Incoming: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(taken?.Body,   Is.Empty);
+                Assert.That(taken?.Quote,  Is.Null, "The line was taken back and still shows what it quoted.");
+            });
+
+        }
+
+        #endregion
+
         #region ACorrection_ReplacesTheTextAndKeepsThePlace()
 
         /// <summary>
@@ -605,9 +666,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// new thing said later; it is the same thing said properly, and moving
         /// it to the bottom would put it after the answers to it.
         ///
-        /// The id changes, because the correction is a stanza of its own and is
-        /// what a further correction has to name - whoever mistypes also
-        /// mistypes in the correction.
+        /// The id stays, because XEP-0308 replaces the payload and not the
+        /// identity of the message (1.1.0 on): a further correction names the
+        /// original again, and everything keyed by id - the page, the archive
+        /// - still finds one line and not two.
         /// </remarks>
         [Test]
         public void CorrectingTheLastLine_ReplacesItAndKeepsItsPlace()
@@ -618,7 +680,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             store.AddOutgoing(alice, "m1", "the wrogn word", noon);
             store.AddIncoming(alice, "alice@example.org/phone", "m2", "the what?", noon.AddMinutes(1));
 
-            var corrected = store.CorrectLastOutgoing(alice, "m3", "the right word");
+            Assert.That(store.LastOwnLine(alice)?.Id, Is.EqualTo("m1"));
+
+            var corrected = store.CorrectOutgoing(alice, "m1", "the right word");
 
             store.TrySnapshot(alice, out _, out _, out var lines);
 
@@ -627,9 +691,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
                 Assert.That(corrected,       Is.Not.Null);
                 Assert.That(corrected!.Body, Is.EqualTo("the right word"));
-                Assert.That(corrected.Id,    Is.EqualTo("m3"),
-                            "The correction kept the old id, so a further correction would name " +
-                            "a stanza that no longer exists.");
+                Assert.That(corrected.Id,    Is.EqualTo("m1"),
+                            "The correction took a new id, so the page and the archive show the " +
+                            "line twice - once wrong and once right.");
 
                 Assert.That(lines,           Has.Count.EqualTo(2),
                             "The correction came in as a third line, so the wrong word stands " +
@@ -662,13 +726,52 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             var store = new ChatStore();
 
-            Assert.That(store.CorrectLastOutgoing(alice, "m1", "never mind"), Is.Null,
+            Assert.That(store.CorrectOutgoing(alice, "m1", "never mind"), Is.Null,
                         "A conversation that has never been written in accepted a correction.");
 
             store.AddIncoming(alice, "alice@example.org/phone", "m2", "Hello?", noon);
 
-            Assert.That(store.CorrectLastOutgoing(alice, "m3", "not mine to fix"), Is.Null,
-                        "Somebody else's line was corrected as though this app had written it.");
+            Assert.Multiple(() =>
+            {
+                Assert.That(store.LastOwnLine(alice), Is.Null);
+                Assert.That(store.CorrectOutgoing(alice, "m2", "not mine to fix"), Is.Null,
+                            "Somebody else's line was corrected as though this app had written it.");
+            });
+
+        }
+
+        #endregion
+
+        #region WhatAnotherDeviceSaidOrWhatWasTakenBack_IsNotCorrectedFromHere()
+
+        /// <summary>
+        /// The line an edit replaces is the last one this app said and that
+        /// still stands.
+        /// </summary>
+        /// <remarks>
+        /// A carbon is the last thing another device of ours said, and the far
+        /// side expects its corrections from there. A line taken back has no
+        /// words left to correct, and new ones under the mark "taken back"
+        /// would contradict it.
+        /// </remarks>
+        [Test]
+        public void WhatAnotherDeviceSaidOrWhatWasTakenBack_IsNotCorrectedFromHere()
+        {
+
+            var store = new ChatStore();
+
+            store.AddOutgoing(alice, "m1", "from here",       noon);
+            store.AddOutgoing(alice, "m2", "taken back",      noon.AddMinutes(1));
+            store.AddOutgoing(alice, "m3", "from the phone",  noon.AddMinutes(2), Carbon: true);
+
+            store.Retract(alice, "m2", Incoming: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(store.LastOwnLine(alice)?.Id,                   Is.EqualTo("m1"));
+                Assert.That(store.CorrectOutgoing(alice, "m2", "revived"),  Is.Null, "a line taken back was given new words");
+                Assert.That(store.CorrectOutgoing(alice, "m3", "mine now"), Is.Null, "the phone's line was corrected from here");
+            });
 
         }
 

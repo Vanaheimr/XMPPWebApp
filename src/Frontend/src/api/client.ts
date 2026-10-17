@@ -248,6 +248,15 @@ export interface RoomMessage {
      * the words would defeat the request.
      */
     retracted:  boolean;
+    /**
+     * XEP-0359: the name the room gave this line, or null while it has none.
+     *
+     * What an answer here points at (and `repliesTo` of an answer names), and
+     * never the `id`: that is the sender's, and everybody present may see a
+     * different one. A line of ours learns it from its reflection, a moment
+     * after it was said - and in a room that names nothing, never.
+     */
+    stanzaId:   string | null;
 }
 
 /** A room as the list in the room view shows it. */
@@ -554,7 +563,13 @@ export const api = {
                        `/chats/${jid(chat)}/messages?before=${encodeURIComponent(before)}` +
                        (limit !== undefined ? `&limit=${limit}` : '')
                    ),
-        send:      (chat: string, body: string)              => request<{ seq: number; message: Message }>('POST', `/chats/${jid(chat)}/messages`, { body }),
+        /**
+         * Sends a line; with `repliesTo`, as an answer to that one (XEP-0461).
+         *
+         * Only the id goes: the server looks the line up and quotes what it
+         * said, not what the page claims it said.
+         */
+        send:      (chat: string, body: string, repliesTo?: string) => request<{ seq: number; message: Message }>('POST', `/chats/${jid(chat)}/messages`, { body, repliesTo }),
         /**
          * XEP-0308: replaces the last line sent here instead of saying a new one.
          *
@@ -598,7 +613,8 @@ export const api = {
          * when it cannot — the server decides that, not this, and the line that
          * comes back says which of the two it was.
          */
-        send:      (room: string, body: string)      => request<{ message: RoomMessage }>('POST', `/rooms/${jid(room)}/messages`, { body }),
+        /** Says something in the room; with `repliesTo` (a line's id), as an answer to that line. */
+        send:      (room: string, body: string, repliesTo?: string) => request<{ message: RoomMessage }>('POST', `/rooms/${jid(room)}/messages`, { body, repliesTo }),
         /** XEP-0308: replaces the last line this app said in the room. */
         correct:   (room: string, body: string)      => request<RoomMessage>('POST', `/rooms/${jid(room)}/messages`, { body, corrects: true }),
         /** XEP-0424: takes a line back, by the name the room gave it. */

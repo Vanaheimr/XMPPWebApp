@@ -1066,22 +1066,35 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (!Request.TryParseJSONObjectRequestBody(out var json, out var wrong))
                 return wrong;
 
-            // XEP-0424 in a room. The name is the one the room gave the line,
-            // which the store carries beside the id on the stanza - a
-            // retraction by the wrong one names, for every other reader, a
-            // line that is not the one that was meant.
+            if (Client is not { IsConnected: true } client)
+                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
+
+            // XEP-0424 in a room. The page names the line by its id; what
+            // goes on the wire is the name the room gave it, which the store
+            // carries beside that id - a retraction by the wrong one names,
+            // for every other reader, a line that is not the one that was
+            // meant.
             if (json.Value<String>("retracts") is String retracts && retracts.Length > 0)
             {
 
                 if (!Rooms.TrySnapshot(jid, out _, out var here, out _) || here is null)
                     return ErrorJSON(Request, HTTPStatusCode.NotFound, "Not in that room.");
 
-                if (Rooms.Retract(jid, here.Nick, retracts) is not RoomMessage taken)
+                if (Rooms.Find(jid, retracts) is not RoomMessage line || !line.Mine)
                     return ErrorJSON(Request, HTTPStatusCode.NotFound,
                                      "There is no line of ours by that name in this room. A " +
                                      "retraction may only take back what this account said.");
 
-                await Client!.RetractMessageAsync(jid.Bare, retracts, MessageType.GroupChat);
+                if (line.RetractableId is not String named)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "The room has given that line no name everybody shares " +
+                                     "(XEP-0359), so a retraction could not say which line it means.");
+
+                if (Rooms.Retract(jid, here.Nick, named) is not RoomMessage taken)
+                    return ErrorJSON(Request, HTTPStatusCode.NotFound,
+                                     "There is no line of ours by that name in this room.");
+
+                await client.RetractMessageAsync(jid.Bare, named, MessageType.GroupChat);
 
                 return JSONResponse(Request, HTTPStatusCode.OK, taken.ToJSON());
 
@@ -1100,49 +1113,92 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // one place it could not be done, because nothing said in a room
             // was ever written down as correctable.
             //
-            // Refused where the room carries encryption, for the reason a
+            // The correction names the original line, a correction of a
+            // correction included (section 5), and the line keeps its id.
+            //
+            // Refused where that line went encrypted, for the reason a
             // conversation is: the correction can only go out in the clear,
-            // and it carries the text that was encrypted.
+            // and it would carry the very text that was encrypted.
             if (json.Value<Boolean?>("corrects") == true)
             {
 
-                if (Rooms.TrySnapshot(jid, out _, out var state, out _) &&
-                    state?.CannotEncrypt is null)
-                {
-                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                     "This room carries encryption, and a correction would go " +
-                                     "out in the clear - carrying the very text that was " +
-                                     "encrypted. Say the line again instead.");
-                }
-
-                var corrected = await Client!.CorrectLastMessageAsync(body, jid);
-
-                if (corrected is null)
+                if (Rooms.LastOwnLine(jid) is not RoomMessage line)
                     return ErrorJSON(Request, HTTPStatusCode.Conflict,
                                      "Nothing has been said here yet, so there is nothing to correct.");
 
+                if (line.Encrypted)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "That line went encrypted, and a correction would go out in " +
+                                     "the clear - carrying the very text that was encrypted. Say " +
+                                     "the line again instead, or take it back.");
+
+                await client.Connection.SendMessageAsync(jid.Bare,
+                                                         body,
+                                                         type:      MessageType.GroupChat,
+                                                         corrects:  line.Id);
+
                 return JSONResponse(Request, HTTPStatusCode.OK,
-                                    Rooms.CorrectLastOwn(jid, corrected, body)?.ToJSON()
+                                    Rooms.CorrectOwn(jid, line.Id, body)?.ToJSON()
                                         ?? new JObject());
 
             }
 
-            if (Client is not { IsConnected: true } client)
-                return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
-
             if (client.Room(jid) is null)
                 return ErrorJSON(Request, HTTPStatusCode.NotFound, "This app is not in that room.");
+
+            // XEP-0461 in a room: "repliesTo": "<id>" answers that line. The
+            // reference on the wire is the name the room gave it and never
+            // the id on its stanza (section 4) - everybody present sees a
+            // different one of those.
+            RoomMessage? answered = null;
+
+            if (json.Value<String>("repliesTo") is String repliesTo && repliesTo.Length > 0)
+            {
+
+                answered = Rooms.Find(jid, repliesTo);
+
+                if (answered is null)
+                    return ErrorJSON(Request, HTTPStatusCode.NotFound,
+                                     "There is no line by that name in this room.");
+
+                // An answer goes to the whole room and carries what it
+                // answers along. For a word said to us alone that would be
+                // repeating it out loud to everybody present.
+                if (answered.Private)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "That was said to you alone. An answer here goes to the whole " +
+                                     "room and would repeat it to everybody.");
+
+                if (answered.Retracted)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "That line was taken back, so there is nothing left to answer.");
+
+                if (answered.RetractableId is null)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "The room has given that line no name everybody shares " +
+                                     "(XEP-0359), so an answer could not say which line it means.");
+
+            }
 
             var canEncrypt  = client.OmemoEnabled && client.CannotEncryptInRoom(jid) is null;
             var now         = DateTimeOffset.UtcNow;
 
+            // In a room the quotation says whose words they were: there is
+            // more than one person they could be from.
+            var quote       = answered is null
+                                  ? ""
+                                  : MessageReply.Quote(answered.Body, answered.Nick);
+
             try
             {
 
+                // Encrypted, an answer is its quotation inside the envelope
+                // and no reference: the <reply/> would sit outside the
+                // encryption and tell anybody watching who answered whom.
                 if (canEncrypt)
                 {
 
-                    var sent = await client.SendEncryptedRoomMessageAsync(jid, body);
+                    var sent = await client.SendEncryptedRoomMessageAsync(jid, quote + body);
 
                     if (!sent.Sent)
                         return ErrorJSON(Request, HTTPStatusCode.Conflict,
@@ -1152,18 +1208,36 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                Request,
                                HTTPStatusCode.Created,
                                new JObject(new JProperty("message",
-                                                         Rooms.AddOutgoing(jid, sent.MessageId!, body, now, true).ToJSON()))
+                                                         Rooms.AddOutgoing(jid, sent.MessageId!, body, now, true,
+                                                                           RepliesTo:  answered?.RetractableId,
+                                                                           Quote:      quote.Length > 0 ? quote : null).ToJSON()))
                            );
 
                 }
 
-                var messageId = await client.SendRoomMessageAsync(jid, body);
+                var messageId = answered is null
+
+                                    ? await client.SendRoomMessageAsync(jid, body)
+
+                                    : await client.Connection.SendReplyAsync(
+                                                jid.Bare,
+                                                body,
+                                                answered.RetractableId!,
+                                                replyToAuthor:  JID.TryParse($"{jid.Bare}/{answered.Nick}", out var author)
+                                                                    ? author
+                                                                    : null,
+                                                quotedText:     quote.Length > 0 ? answered.Body : null,
+                                                quotedAuthor:   answered.Nick,
+                                                type:           MessageType.GroupChat
+                                            );
 
                 return JSONResponse(
                            Request,
                            HTTPStatusCode.Created,
                            new JObject(new JProperty("message",
-                                                     Rooms.AddOutgoing(jid, messageId, body, now, false).ToJSON()))
+                                                     Rooms.AddOutgoing(jid, messageId, body, now, false,
+                                                                       RepliesTo:  answered?.RetractableId,
+                                                                       Quote:      quote.Length > 0 ? quote : null).ToJSON()))
                        );
 
             }
@@ -1687,31 +1761,62 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // XEP-0308: "corrects": true means replace the last line this app
             // sent here rather than say a new one.
             //
-            // Refused where the conversation is encrypted, and that is not
+            // The line is the one the conversation shows, named by its id -
+            // not whatever the library remembers having sent last. That memory
+            // ends with the process, and a page that offers to edit the line
+            // in front of it after a restart would otherwise be told there is
+            // nothing to correct.
+            //
+            // Refused where that line went encrypted, and that is not
             // timidity: a correction carries the corrected text, and this app
             // can only send one in the clear. Sending it would put the very
             // words that were encrypted a moment ago on the wire in plain -
             // and it would look, to whoever reads the result, like a
-            // successful correction of an encrypted line.
+            // successful correction of an encrypted line. A line that went in
+            // the clear is corrected in the clear, which tells nobody anything
+            // the line had not told them already.
             if (json.Value<Boolean?>("corrects") == true)
             {
 
-                if (Chats.EncryptionOn(jid))
-                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                     "This conversation is encrypted, and a correction would " +
-                                     "go out in the clear - carrying the very text that was " +
-                                     "encrypted. Turn encryption off for it first, or say the " +
-                                     "line again.");
-
-                var corrected = await Client!.CorrectLastMessageAsync(body, jid);
-
-                if (corrected is null)
+                if (Chats.LastOwnLine(jid) is not ChatMessage line)
                     return ErrorJSON(Request, HTTPStatusCode.Conflict,
                                      "Nothing has gone out here yet, so there is nothing to correct.");
 
+                if (line.Encrypted)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "That line went encrypted, and a correction would go out " +
+                                     "in the clear - carrying the very text that was encrypted. " +
+                                     "Say the line again, or take it back.");
+
+                // XEP-0308, section 5: every correction names the original
+                // line, a correction of a correction included - which is why
+                // the library's own CorrectLastMessageAsync, which names the
+                // stanza it sent last, is not used here.
+                await Client!.Connection.SendMessageAsync(jid, body, corrects: line.Id);
+
                 return JSONResponse(Request, HTTPStatusCode.OK,
-                                    Chats.CorrectLastOutgoing(jid, corrected, body)?.ToJSON()
+                                    Chats.CorrectOutgoing(jid, line.Id, body)?.ToJSON()
                                         ?? new JObject());
+
+            }
+
+            // XEP-0461: "repliesTo": "<id>" answers that line. Looked up here
+            // rather than taken from the browser, so that what is quoted is
+            // what the line said and not what somebody claims it said.
+            ChatMessage? answered = null;
+
+            if (json.Value<String>("repliesTo") is String repliesTo && repliesTo.Length > 0)
+            {
+
+                answered = Chats.Find(jid, repliesTo) ?? Archive?.Find(jid, repliesTo);
+
+                if (answered is null)
+                    return ErrorJSON(Request, HTTPStatusCode.NotFound,
+                                     "There is no line by that name in this conversation.");
+
+                if (answered.Retracted)
+                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                     "That line was taken back, so there is nothing left to answer.");
 
             }
 
@@ -1720,7 +1825,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             try
             {
-                (message, refusal) = await SendToAsync(jid, body);
+                (message, refusal) = await SendToAsync(jid, body, answered);
             }
             catch (Exception e)
             {
@@ -1744,7 +1849,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
         #endregion
 
-        #region (internal) SendToAsync   (Jid, Body)
+        #region (internal) SendToAsync   (Jid, Body, Answering = null)
 
         /// <summary>
         /// Sends one message the way the policy says it should travel, and puts
@@ -1764,13 +1869,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// Falling back is safe precisely there and nowhere else: a message
         /// nobody could open was not delivered, so sending it again in the clear
         /// duplicates nothing.
+        ///
+        /// <b>An answer travels two ways, depending on the lane.</b> In the
+        /// clear it is a proper XEP-0461 reply: the reference, and the quoted
+        /// lines marked as fallback. Encrypted it is only the quoted lines in
+        /// front of the answer, inside the envelope, and no reference at all -
+        /// the &lt;reply/&gt; would sit outside the encryption and tell anybody
+        /// watching the connection who answered whom. What the far side shows
+        /// is then what every client shows for a quotation; what this side
+        /// keeps is the same line either way.
         /// </remarks>
+        /// <param name="Jid">The far end.</param>
+        /// <param name="Body">What was typed.</param>
+        /// <param name="Answering">XEP-0461: the line this answers, or null.</param>
         /// <returns>
         /// The line as the conversation now holds it, or null and the sentence
         /// that says why it was not sent.
         /// </returns>
-        internal async Task<(ChatMessage? Message, String? Refusal)> SendToAsync(JID     Jid,
-                                                                                String  Body)
+        internal async Task<(ChatMessage? Message, String? Refusal)> SendToAsync(JID           Jid,
+                                                                                String        Body,
+                                                                                ChatMessage?  Answering   = null)
         {
 
             if (Client is not { IsConnected: true } client)
@@ -1779,8 +1897,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             var turnedOff           = !Chats.EncryptionOn(Jid);
             var wasEncryptedBefore  = Chats.WasEncrypted(Jid);
 
+            // What an answer carries along, written the way every client
+            // writes it. Empty for a line without text, which quotes nothing.
+            var quote               = Answering is null
+                                          ? ""
+                                          : MessageReply.Quote(Answering.Body);
+
             String               messageId;
             OmemoIdentityCheck?  identity  = null;
+
+            Task<String> SendInTheClear()
+
+                => Answering is null
+                       ? client.SendMessageAsync(Jid, Body)
+                       : client.SendReplyAsync(Jid,
+                                               Body,
+                                               Answering.Id,
+                                               Answering.Direction == MessageDirection.Outgoing
+                                                   ? client.BareJid
+                                                   : JID.TryParse(Answering.From, out var author)
+                                                         ? author
+                                                         : Jid,
+                                               quotedText: quote.Length > 0 ? Answering.Body : null);
 
             switch (HowToSend(client.OmemoEnabled, turnedOff, wasEncryptedBefore))
             {
@@ -1788,7 +1926,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 case Delivery.Encrypted:
                 {
 
-                    var sent = await client.SendEncryptedMessageAsync(Jid, Body);
+                    var sent = await client.SendEncryptedMessageAsync(Jid, quote + Body);
 
                     if (sent.Readable)
                     {
@@ -1814,7 +1952,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                     logger.LogInformation("OMEMO: {Jid} has no device that can read an encrypted message; sending in the clear", Jid);
 
-                    messageId = await client.SendMessageAsync(Jid, Body);
+                    messageId = await SendInTheClear();
                     break;
 
                 }
@@ -1823,12 +1961,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     return (null, CannotEncryptText(Jid, null));
 
                 default:
-                    messageId = await client.SendMessageAsync(Jid, Body);
+                    messageId = await SendInTheClear();
                     break;
 
             }
 
-            return (Chats.AddOutgoing(Jid, messageId, Body, DateTimeOffset.UtcNow, Identity: identity),
+            return (Chats.AddOutgoing(Jid,
+                                      messageId,
+                                      Body,
+                                      DateTimeOffset.UtcNow,
+                                      Identity:   identity,
+                                      RepliesTo:  Answering?.Id,
+                                      Quote:      quote.Length > 0 ? quote : null),
                     null);
 
         }

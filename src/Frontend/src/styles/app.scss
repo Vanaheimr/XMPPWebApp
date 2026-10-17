@@ -724,6 +724,7 @@ input, textarea, select {
 
 .message {
 
+    position:       relative;
     max-width:      min(75%, 44rem);
     padding:        0.45rem 0.7rem;
     border-radius:  12px;
@@ -735,6 +736,92 @@ input, textarea, select {
         align-self:    flex-end;
         background:    $color-out;
         border-color:  $color-out-border;
+    }
+
+    // What can be done to a line: answer it, and say the last one of ours
+    // again. Out of sight until a pointer rests on the line or a tap picks it -
+    // buttons beside every line would be louder than the conversation.
+    //
+    // Beside the bubble and not on it, on the side facing the middle, so that
+    // it covers none of the words.
+    .actions {
+
+        position:       absolute;
+        top:            0.15rem;
+        left:           calc(100% + 0.4rem);
+        z-index:        1;
+        display:        none;
+        gap:            0.1rem;
+        padding:        0.1rem;
+        background:     $color-surface;
+        border:         1px solid $color-border;
+        border-radius:  999px;
+        box-shadow:     0 1px 4px rgba(0, 0, 0, 0.12);
+
+        button {
+            display:          inline-flex;
+            align-items:      center;
+            justify-content:  center;
+            width:            1.75rem;
+            height:           1.75rem;
+            padding:          0;
+            border:           0;
+            border-radius:    999px;
+            background:       transparent;
+            color:            $color-muted;
+            font-size:        0.8rem;
+            cursor:           pointer;
+
+            &:hover,
+            &:focus-visible {
+                background:  $color-bg;
+                color:       $color-accent;
+            }
+        }
+
+        // XEP-0308: only the line an edit would replace has a pencil.
+        .edit {
+            display: none;
+        }
+
+        // The gap to the bubble, still part of the line: a pointer on its way
+        // from the words to the buttons would otherwise leave the line and
+        // take the buttons with it.
+        &::before {
+            content:   '';
+            position:  absolute;
+            top:       0;
+            bottom:    0;
+            right:     100%;
+            width:     0.5rem;
+        }
+
+    }
+
+    &.out .actions {
+        left:   auto;
+        right:  calc(100% + 0.4rem);
+
+        &::before {
+            right:  auto;
+            left:   100%;
+        }
+    }
+
+    &:hover .actions,
+    &:focus-within .actions,
+    &.active .actions {
+        display: flex;
+    }
+
+    &.editable .actions .edit {
+        display: inline-flex;
+    }
+
+    // The line an answer is about, brought into view: marked for a moment so
+    // the eye finds it among its neighbours.
+    &.flash {
+        animation: line-flash 1.6s ease-out;
     }
 
     .body {
@@ -773,6 +860,16 @@ input, textarea, select {
         color:           $color-muted;
         white-space:     pre-wrap;
         overflow-wrap:   anywhere;
+
+        // A click leads to the line it answers.
+        &.linked {
+            cursor: pointer;
+
+            &:hover {
+                color:              $color-text;
+                border-left-color:  $color-accent;
+            }
+        }
     }
 
     .meta {
@@ -780,6 +877,55 @@ input, textarea, select {
         font-size:   0.7rem;
         color:       $color-muted;
         text-align:  right;
+    }
+
+}
+
+@keyframes line-flash {
+    from { box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.55); }
+    to   { box-shadow: 0 0 0 3px rgba(47, 111, 237, 0); }
+}
+
+// What sending will do, when it is not simply saying something new: answer a
+// line (XEP-0461), or replace one (XEP-0308). Above the box and not in it, so
+// that the line it is about can be read while the answer is written.
+.composer-context {
+
+    display:      flex;
+    align-items:  center;
+    gap:          0.7rem;
+    padding:      0.45rem 1rem;
+    background:   $color-surface;
+    border-top:   1px solid $color-border;
+    font-size:    0.85rem;
+
+    > i {
+        color: $color-accent;
+    }
+
+    .context-text {
+        flex:          1;
+        min-width:     0;
+        padding-left:  0.6rem;
+        border-left:   2px solid $color-accent;
+    }
+
+    .context-label {
+        font-weight:  600;
+        color:        $color-accent;
+    }
+
+    .context-line {
+        color:          $color-muted;
+        white-space:    nowrap;
+        overflow:       hidden;
+        text-overflow:  ellipsis;
+    }
+
+    // One strip and the box under it read as one thing - while the strip is
+    // there; a hidden one is still the box's neighbour in the document.
+    &:not([hidden]) + .composer {
+        border-top-color: transparent;
     }
 
 }
@@ -1019,6 +1165,35 @@ input, textarea, select {
 
     .message {
         max-width: 88%;
+    }
+
+    // No room beside a bubble on a phone, and on it they would cover words:
+    // the buttons become a row at the foot of the line that was tapped, and
+    // only of that one - hover is not a thing a finger does.
+    .message .actions,
+    .message.out .actions {
+        position:         static;
+        justify-content:  flex-end;
+        margin-top:       0.3rem;
+        padding:          0.25rem 0 0 0;
+        border:           0;
+        border-top:       1px solid $color-border;
+        border-radius:    0;
+        background:       transparent;
+        box-shadow:       none;
+
+        &::before {
+            content: none;
+        }
+    }
+
+    .message:hover .actions {
+        display: none;
+    }
+
+    .message.active .actions,
+    .message:focus-within .actions {
+        display: flex;
     }
 
 }

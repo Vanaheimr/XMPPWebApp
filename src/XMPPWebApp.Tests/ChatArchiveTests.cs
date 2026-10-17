@@ -330,6 +330,38 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region Find_ReachesBackPastTheWindow()
+
+        /// <summary>
+        /// An answer to a line somebody scrolled back to: the chat store only
+        /// holds the recent past, the archive holds the rest.
+        /// </summary>
+        [Test]
+        public async Task Find_ReachesBackPastTheWindow()
+        {
+
+            await using (var archive = Open())
+            {
+                archive.Record(Incoming(alice, "m1", "Back in September", september));
+                archive.Record(Incoming(alice, "m1", "Back in September!", september) with { Corrected = true });
+                archive.Record(Incoming(alice, "m2", "And in October",    october));
+                await archive.FlushAsync();
+            }
+
+            await using var reading = Open();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reading.Find(alice, "m1")?.Body,  Is.EqualTo("Back in September!"), "as it last stood");
+                Assert.That(reading.Find(alice, "m2")?.Body,  Is.EqualTo("And in October"));
+                Assert.That(reading.Find(alice, "m3"),        Is.Null);
+                Assert.That(reading.Find(bob,   "m1"),        Is.Null, "one conversation's line is not another's");
+            });
+
+        }
+
+        #endregion
+
         #region ATakenBackLine_StaysTakenBack()
 
         /// <summary>

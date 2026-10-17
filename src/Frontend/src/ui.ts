@@ -126,15 +126,27 @@ export function preview(message: Message | null): string {
     if (message === null)
         return '';
 
-    const text  = message.media !== null        ? mediaPreview(message.media.contentType)
-                : imageURL(message.body) !== null ? '\u{1F4F7} Picture'
-                :                                   message.body.split(/\r?\n/, 1)[0].trim();
-
-    const line  = text.length > 120 ? text.slice(0, 120) + '…' : text;
+    const line = excerpt(message);
 
     return message.direction === 'out'
                ? `You: ${line}`
                : line;
+
+}
+
+/**
+ * The first line of a message, or what kind of file it is - for a place with
+ * room for one line. A line of a room has no file beside it, only a body.
+ */
+export function excerpt(message: Pick<Message, 'body'> & Partial<Pick<Message, 'media'>>): string {
+
+    const media = message.media ?? null;
+
+    const text  = media !== null                  ? mediaPreview(media.contentType)
+                : imageURL(message.body) !== null ? '\u{1F4F7} Picture'
+                :                                   message.body.split(/\r?\n/, 1)[0].trim();
+
+    return text.length > 120 ? text.slice(0, 120) + '…' : text;
 
 }
 

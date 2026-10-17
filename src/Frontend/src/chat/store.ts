@@ -261,9 +261,10 @@ export class ChatStore {
 
     }
 
-    async sendToRoom(jid: string, body: string): Promise<RoomMessage> {
+    /** Says something in a room; with `repliesTo`, as an answer to the line of that id (XEP-0461). */
+    async sendToRoom(jid: string, body: string, repliesTo?: string): Promise<RoomMessage> {
 
-        const result = await api.rooms.send(jid, body);
+        const result = await api.rooms.send(jid, body, repliesTo);
 
         // The room will hand it back as well; it is recognised by its id there
         // and on the server, so this only makes it appear at once.
@@ -473,9 +474,10 @@ export class ChatStore {
 
     }
 
-    async send(jid: string, body: string): Promise<Message> {
+    /** Sends a line; with `repliesTo`, as an answer to the line of that id (XEP-0461). */
+    async send(jid: string, body: string, repliesTo?: string): Promise<Message> {
 
-        const result = await api.chats.send(jid, body);
+        const result = await api.chats.send(jid, body, repliesTo);
 
         // The stream may have delivered it already; either way it is in.
         if (this.applyMessage(jid, result.message))

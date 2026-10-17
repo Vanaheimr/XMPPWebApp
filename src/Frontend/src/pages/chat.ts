@@ -1,10 +1,11 @@
 import { api, type Chat, type ContactAction, type Message } from '../api/client';
 import { auth } from '../auth';
+import { lineActions, quotation, showLine } from '../chat/lines';
 import { renderBody } from '../chat/links';
 import { store, type StoreEvent } from '../chat/store';
 import { html, must, render, type HTMLFragment } from '../html';
 import type { Page } from '../router';
-import { errorMessage, formatBytes, formatDay, formatListTime, formatTime, presenceLabel, preview, sameDay } from '../ui';
+import { errorMessage, excerpt, formatBytes, formatDay, formatListTime, formatTime, presenceLabel, preview, sameDay } from '../ui';
 
 // The chat page: the list of conversations on the left, the open conversation
 // on the right, the composer at the bottom. Everything shown here comes from
@@ -69,6 +70,8 @@ export const chatPage: Page = {
 
                     <div id="messages" class="messages" aria-live="polite"></div>
 
+                    <div id="composer-context" class="composer-context" hidden></div>
+
                     <form id="composer" class="composer">
                         <input id="file" type="file" hidden>
                         <button type="button" id="attach" class="btn" title="Send a file"><i class="fa-solid fa-paperclip"></i></button>
@@ -104,6 +107,7 @@ class ChatView {
     private readonly peer:       HTMLElement;
     private readonly banner:     HTMLElement;
     private readonly messages:   HTMLElement;
+    private readonly context:    HTMLElement;
     private readonly composer:   HTMLFormElement;
     private readonly fileInput:  HTMLInputElement;
     private readonly attach:     HTMLButtonElement;
@@ -116,6 +120,12 @@ class ChatView {
 
     /** XEP-0308/0424: the id of the line in the box, or null when it is new. */
     private editing:     string | null = null;
+
+    /** What was in the box before an edit took it over, to be put back afterwards. */
+    private draftBeforeEdit = '';
+
+    /** XEP-0461: the line the box answers, or null. */
+    private replyingTo:  Message | null = null;
     private elements     = new Map<string, HTMLElement>();
     private lastRendered: Message | null = null;
     private atBottom     = true;
@@ -137,6 +147,7 @@ class ChatView {
         this.peer        = must(element, '#peer');
         this.banner      = must(element, '#banner');
         this.messages    = must(element, '#messages');
+        this.context     = must(element, '#composer-context');
         this.composer    = must<HTMLFormElement>(element, '#composer');
         this.fileInput   = must<HTMLInputElement>(element, '#file');
         this.attach      = must<HTMLButtonElement>(element, '#attach');
@@ -210,28 +221,33 @@ class ChatView {
 
             // XEP-0308: up-arrow in an empty box takes back the last line sent
             // here, to be said properly. Sending it then replaces that line
-            // instead of adding one.
+            // instead of adding one. The pencil on that line does the same.
             if (event.key === 'ArrowUp' && this.textarea.value.length === 0) {
 
-                const mine = this.lastOwnLine();
+                const mine = this.editableLine();
 
                 if (mine !== null) {
                     event.preventDefault();
-                    this.textarea.value = mine.body;
-                    this.editing        = mine.id;
-                    this.composer.classList.add('editing');
-                    this.unsay.hidden   = false;
-                    this.autosize();
+                    this.startEditing(mine);
                 }
 
                 return;
 
             }
 
-            if (event.key === 'Escape' && this.editing)
-                this.stopEditing();
+            if (event.key === 'Escape') {
+                if (this.editing !== null)
+                    this.stopEditing();
+                else if (this.replyingTo !== null)
+                    this.stopReplying();
+            }
 
         });
+
+        // One listener for every line, because the lines are drawn again and
+        // again: the buttons on a line, the quotation in it, and a tap that
+        // shows the buttons on a screen nothing hovers over.
+        this.messages.addEventListener('click', event => this.onMessageClick(event));
 
         this.textarea.addEventListener('input', () => {
             this.autosize();
@@ -280,6 +296,15 @@ class ChatView {
 
         if (jid === this.current && this.elements.size > 0)
             return;
+
+        // Both belong to the conversation they were started in: an edit sent
+        // in the next one would replace a line there, and an answer would
+        // point at a line that is not in it.
+        if (this.editing !== null)
+            this.stopEditing();
+
+        if (this.replyingTo !== null)
+            this.stopReplying();
 
         if (this.current !== null) {
             this.drafts.set(this.current, this.textarea.value);
@@ -628,6 +653,8 @@ class ChatView {
         for (const message of list)
             this.append(message);
 
+        this.markEditable();
+
         if (keepPosition)
             this.messages.scrollTop = previousTop + (this.messages.scrollHeight - previousHeight);
 
@@ -717,6 +744,7 @@ class ChatView {
             const replacement = this.messageElement(message);
             existing.replaceWith(replacement);
             this.elements.set(message.id, replacement);
+            this.markEditable();
             return;
         }
 
@@ -731,7 +759,25 @@ class ChatView {
             this.messages.replaceChildren();
 
         this.append(message);
+        this.markEditable();
         this.scrollIfAtBottom();
+
+    }
+
+    /**
+     * XEP-0308: puts the pencil on the one line an edit would replace, and
+     * takes it off whichever line had it before - a new line of ours moves
+     * it, a line taken back loses it.
+     */
+    private markEditable(): void {
+
+        const line = this.editableLine();
+
+        for (const marked of this.messages.querySelectorAll('.message.editable'))
+            marked.classList.remove('editable');
+
+        if (line !== null)
+            this.elements.get(line.id)?.classList.add('editable');
 
     }
 
@@ -782,19 +828,18 @@ class ChatView {
         // XEP-0461: what is being answered, above the answer. The body no
         // longer holds it, so leaving this out would lose the context entirely -
         // which would be worse than the duplicate it replaces.
-        if (message.quote !== null && message.quote.length > 0) {
+        if (message.quote !== null && message.quote.length > 0 && !message.retracted) {
 
             const quoted = document.createElement('blockquote');
             quoted.className   = 'quote';
 
-            // The "> " is how the duplicate travels for clients without the
-            // extension. A blockquote says the same thing, so saying it twice
-            // is just noise.
-            quoted.textContent = message.quote
-                                     .replace(/\s+$/, '')
-                                     .split('\n')
-                                     .map(line => line.replace(/^>\s?/, ''))
-                                     .join('\n');
+            // A click leads to the line it answers, when that line is known.
+            if (message.repliesTo !== null) {
+                quoted.classList.add('linked');
+                quoted.title = 'Show the message this answers';
+            }
+
+            quoted.textContent = quotation(message.quote);
 
             element.appendChild(quoted);
 
@@ -839,6 +884,12 @@ class ChatView {
         meta.title       = new Date(message.timestamp).toLocaleString() + (message.direction === 'in' ? `\nfrom ${message.from}` : '');
 
         element.appendChild(meta);
+
+        // A line taken back has nothing left to answer or to say again. Last,
+        // so that where the buttons become a row of the line - on a phone -
+        // that row is at its foot.
+        if (!message.retracted)
+            element.appendChild(lineActions({ reply: true, edit: message.direction === 'out' }));
 
         return element;
 
@@ -890,28 +941,201 @@ class ChatView {
 
     }
 
-    /** The last line this app sent in the conversation on screen, or null. */
-    private lastOwnLine(): Message | null {
+    /**
+     * XEP-0308: the line an edit would replace, or null.
+     *
+     * The rule the server applies - the last line sent from here that still
+     * stands, so not a carbon of another device and not a line taken back -
+     * and then null for the two it refuses or that make no sense: a line that
+     * went encrypted, whose correction could only go out in the clear, and a
+     * file.
+     */
+    private editableLine(): Message | null {
 
         if (this.current === null)
             return null;
 
         const lines = store.messages.get(this.current) ?? [];
 
-        for (let i = lines.length - 1; i >= 0; i--)
-            if (lines[i].direction === 'out' && !lines[i].retracted)
-                return lines[i];
+        for (let i = lines.length - 1; i >= 0; i--) {
+
+            const line = lines[i];
+
+            if (line.direction !== 'out' || line.carbon || line.retracted)
+                continue;
+
+            return line.encrypted || line.media !== null ? null : line;
+
+        }
 
         return null;
 
     }
 
-    private stopEditing(): void {
-        this.editing        = null;
-        this.textarea.value = '';
-        this.composer.classList.remove('editing');
-        this.unsay.hidden   = true;
+    private messageById(id: string): Message | null {
+
+        if (this.current === null)
+            return null;
+
+        return (store.messages.get(this.current) ?? []).find(message => message.id === id) ?? null;
+
+    }
+
+    /** XEP-0308: puts a line into the box, to be said properly. */
+    private startEditing(line: Message): void {
+
+        if (this.replyingTo !== null)
+            this.stopReplying();
+
+        if (this.editing === null)
+            this.draftBeforeEdit = this.textarea.value;
+
+        this.editing        = line.id;
+        this.textarea.value = line.body;
+        this.composer.classList.add('editing');
+        this.unsay.hidden   = false;
+
+        this.renderContext();
         this.autosize();
+        this.textarea.focus();
+
+    }
+
+    /** Ends an edit, and gives the box back what it held before. */
+    private stopEditing(): void {
+        this.editing         = null;
+        this.textarea.value  = this.draftBeforeEdit;
+        this.draftBeforeEdit = '';
+        this.composer.classList.remove('editing');
+        this.unsay.hidden    = true;
+        this.renderContext();
+        this.autosize();
+    }
+
+    /**
+     * XEP-0461: the next line sent answers this one.
+     *
+     * What is in the box stays: whoever starts typing and then decides it is
+     * an answer to something should not have to type it again.
+     */
+    private startReplying(line: Message): void {
+
+        if (this.editing !== null)
+            this.stopEditing();
+
+        this.replyingTo = line;
+
+        this.renderContext();
+        this.textarea.focus();
+
+    }
+
+    private stopReplying(): void {
+        this.replyingTo = null;
+        this.renderContext();
+    }
+
+    /**
+     * The strip above the box that says what sending will do: answer a line,
+     * or replace one. Without it the box looks the same either way, and
+     * Enter does something different from what it seems to.
+     */
+    private renderContext(): void {
+
+        const editing  = this.editing !== null;
+        const line     = editing ? this.messageById(this.editing!) : this.replyingTo;
+
+        this.composer.classList.toggle('replying', !editing && line !== null);
+
+        if (line === null) {
+            this.context.hidden = true;
+            this.context.replaceChildren();
+            return;
+        }
+
+        const chat  = this.current !== null ? store.chats.get(this.current) : undefined;
+        const who   = line.direction === 'out' ? 'yourself' : (chat?.displayName ?? line.chat);
+
+        render(this.context, html`
+            <i class="fa-solid ${editing ? 'fa-pen' : 'fa-reply'}" aria-hidden="true"></i>
+            <div class="context-text">
+                <div class="context-label">${editing ? 'Editing your message' : `Replying to ${who}`}</div>
+                <div class="context-line">${excerpt(line)}</div>
+            </div>
+            <button type="button" class="btn small" title="Cancel (Esc)" aria-label="Cancel"><i class="fa-solid fa-xmark"></i></button>
+        `);
+
+        this.context.hidden = false;
+
+        must<HTMLButtonElement>(this.context, 'button').addEventListener('click', () => {
+            if (editing)
+                this.stopEditing();
+            else
+                this.stopReplying();
+            this.textarea.focus();
+        });
+
+    }
+
+    private onMessageClick(event: MouseEvent): void {
+
+        if (!(event.target instanceof Element))
+            return;
+
+        const target   = event.target;
+        const element  = target.closest<HTMLElement>('article.message');
+        const message  = element?.dataset.id !== undefined ? this.messageById(element.dataset.id) : null;
+
+        if (element === null || message === null)
+            return;
+
+        switch (target.closest<HTMLButtonElement>('.actions button')?.dataset.action) {
+
+            case 'reply':
+                element.classList.remove('active');
+                this.startReplying(message);
+                return;
+
+            case 'edit':
+                element.classList.remove('active');
+                this.startEditing(message);
+                return;
+
+        }
+
+        if (message.repliesTo !== null && target.closest('.quote') !== null) {
+            this.showAnswered(message.repliesTo);
+            return;
+        }
+
+        // Links, players and a selection in progress keep their click.
+        if (target.closest('a, button, audio, video') !== null || window.getSelection()?.isCollapsed === false)
+            return;
+
+        // A tap picks the line, so its buttons show where nothing hovers; a
+        // second tap, or a tap on another line, puts them away again.
+        const picked = element.classList.contains('active');
+
+        for (const active of this.messages.querySelectorAll('.message.active'))
+            active.classList.remove('active');
+
+        if (!picked)
+            element.classList.add('active');
+
+    }
+
+    /** XEP-0461: the line an answer is about, brought into view. */
+    private showAnswered(id: string): void {
+
+        const element = this.elements.get(id);
+
+        if (element === undefined) {
+            this.toast('info', 'The message this answers is further back than what is loaded here.');
+            return;
+        }
+
+        showLine(element);
+
     }
 
     /**
@@ -945,6 +1169,7 @@ class ChatView {
         const jid      = this.current;
         const body     = this.textarea.value.trimEnd();
         const editing  = this.editing !== null;
+        const answers  = this.replyingTo;
 
         if (jid === null || body.trim().length === 0)
             return;
@@ -953,14 +1178,33 @@ class ChatView {
 
         try
         {
+
             this.stopTyping();
-            await (editing ? store.correct(jid, body) : store.send(jid, body));
-            this.stopEditing();
-            this.textarea.value = '';
-            this.drafts.delete(jid);
-            this.autosize();
-            this.atBottom = true;
-            this.scrollToBottom();
+
+            if (editing) {
+
+                await store.correct(jid, body);
+
+                // The line stays where it was, so the view does too - and
+                // what was in the box before the edit comes back.
+                this.stopEditing();
+
+            }
+            else {
+
+                await store.send(jid, body, answers?.id);
+
+                if (this.replyingTo === answers)
+                    this.stopReplying();
+
+                this.textarea.value = '';
+                this.drafts.delete(jid);
+                this.autosize();
+                this.atBottom = true;
+                this.scrollToBottom();
+
+            }
+
         }
         catch (error)
         {

@@ -77,6 +77,104 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region WhatAnEditOrAnAnswerMayReachHere()
+
+        /// <summary>
+        /// The rules the room view's buttons rest on: which line an edit
+        /// replaces, which one learns its name from a reflection, and that a
+        /// line taken back keeps nothing of what it said.
+        /// </summary>
+        /// <remarks>
+        /// An edit reaches the last line this app said that still stands - not
+        /// a private word, which this app cannot send, and not a line taken
+        /// back. A name the room gave is learnt once, for a line of ours only:
+        /// a reflection from another nickname naming our line is not ours to
+        /// believe. And a line taken back loses the quotation along with the
+        /// words, because the quotation was part of what was said.
+        /// </remarks>
+        [Test]
+        public void WhatAnEditOrAnAnswerMayReachHere()
+        {
+
+            var rooms = new RoomStore();
+
+            rooms.Joining(TheRoom, "me");
+
+            rooms.AddIncoming(TheRoom, "alice", "a1", "Shall we meet at eight?", Noon, RetractableId: "room-1");
+            rooms.AddOutgoing(TheRoom, "m1", "Eight is fine", Noon.AddMinutes(1), Encrypted: false,
+                              RepliesTo: "room-1", Quote: "> alice:\n> Shall we meet at eight?\n");
+            rooms.AddOutgoing(TheRoom, "m2", "taken back soon", Noon.AddMinutes(2), Encrypted: false);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(rooms.Named(TheRoom, "m1", "alice", "room-x"), Is.Null, "another nickname named our line");
+                Assert.That(rooms.Named(TheRoom, "a1", "alice", "room-y"), Is.Null, "somebody else's line was renamed");
+                Assert.That(rooms.Named(TheRoom, "m1", "me",    "room-2")?.RetractableId, Is.EqualTo("room-2"));
+                Assert.That(rooms.Named(TheRoom, "m1", "me",    "room-3"), Is.Null, "a name once given changed");
+            });
+
+            rooms.Named  (TheRoom, "m2", "me", "room-4");
+            rooms.Retract(TheRoom, "me", "room-4");
+
+            var corrected = rooms.CorrectOwn(TheRoom, "m1", "Eight is fine!");
+
+            rooms.TrySnapshot(TheRoom, out _, out _, out var lines);
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(rooms.LastOwnLine(TheRoom)?.Id, Is.EqualTo("m1"),
+                            "An edit would reach a line that was taken back.");
+
+                Assert.That(corrected?.Id,        Is.EqualTo("m1"), "The corrected line took another id.");
+                Assert.That(corrected?.Body,      Is.EqualTo("Eight is fine!"));
+                Assert.That(corrected?.Quote,     Is.EqualTo("> alice:\n> Shall we meet at eight?\n"),
+                            "The correction lost what the line answers.");
+
+                Assert.That(rooms.CorrectOwn(TheRoom, "a1", "not mine"), Is.Null, "somebody else's line was corrected");
+
+                Assert.That(lines,                Has.Count.EqualTo(3));
+                Assert.That(lines[2].Body,        Is.Empty);
+                Assert.That(lines[2].Retracted,   Is.True);
+
+                Assert.That(rooms.Find(TheRoom, "a1")?.RetractableId, Is.EqualTo("room-1"));
+                Assert.That(rooms.Find(Other,   "a1"),                Is.Null);
+
+                Assert.That(rooms.Find(TheRoom, "m1")?.ToJSON().Value<String>("stanzaId"), Is.EqualTo("room-2"),
+                            "The page is not told the room's name for the line, so it can neither offer an " +
+                            "answer to it nor find the line an answer is about.");
+
+            });
+
+        }
+
+        #endregion
+
+        #region ATakenBackAnswerKeepsNothingOfWhatItSaid()
+
+        [Test]
+        public void ATakenBackAnswerKeepsNothingOfWhatItSaid()
+        {
+
+            var rooms = new RoomStore();
+
+            rooms.Joining(TheRoom, "me");
+
+            rooms.AddIncoming(TheRoom, "bob", "b1", "Me too", Noon, RepliesTo: "room-1",
+                              Quote: "> alice:\n> Shall we meet at eight?\n", RetractableId: "room-2");
+
+            var taken = rooms.Retract(TheRoom, "bob", "room-2");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(taken?.Body,   Is.Empty);
+                Assert.That(taken?.Quote,  Is.Null, "The line was taken back and still shows what it quoted.");
+            });
+
+        }
+
+        #endregion
+
         #region OurOwnLineComingBackIsNotASecondLine()
 
         /// <summary>

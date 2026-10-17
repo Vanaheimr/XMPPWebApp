@@ -498,6 +498,36 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+        #region Find(Peer, Id)
+
+        /// <summary>
+        /// One line of a conversation by its id, as it last stood - or null
+        /// when the archive does not hold it.
+        /// </summary>
+        /// <remarks>
+        /// For an answer to a line somebody scrolled back to. The chat store
+        /// only holds the recent past, and the browser shows whatever the
+        /// archive handed it; a line that is on screen is a line that can be
+        /// answered.
+        ///
+        /// Backwards through the months and reading every one of them when the
+        /// id is nowhere - which is the price of an archive that is a folder of
+        /// text files, paid only when somebody answers something old.
+        /// </remarks>
+        public ChatMessage? Find(JID     Peer,
+                                 String  Id)
+        {
+
+            foreach (var file in MonthFiles(Peer))
+                if (Read(file.Path, Peer).FirstOrDefault(message => message.Id == Id) is ChatMessage found)
+                    return found;
+
+            return null;
+
+        }
+
+        #endregion
+
         #region TryGetMedia(Peer, Name, out Path, out ContentType)
 
         /// <summary>

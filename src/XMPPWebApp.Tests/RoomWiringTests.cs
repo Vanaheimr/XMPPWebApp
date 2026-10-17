@@ -17,10 +17,18 @@
 
 #region Usings
 
+using System.Net;
+using System.Text;
+using System.Xml.Linq;
+
+using Newtonsoft.Json.Linq;
+
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
+using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.Ratatoskr.Server;
 using org.GraphDefined.Vanaheimr.XMPPWebApp.Account;
@@ -194,6 +202,61 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             api!.Rooms.TrySnapshot(RoomJid, out _, out _, out var messages);
             return messages;
         }
+
+        private const String WebUser      = "admin";
+        private const String WebPassword  = "correct-horse-battery-staple";
+
+        /// <summary>
+        /// A browser signed in to the web page, for what only the routes do:
+        /// look a line up, choose its name, and put the stanza together.
+        /// </summary>
+        private async Task<HttpClient> BrowserAsync()
+        {
+
+            Assert.That(await api!.CreateUserIfNotExists(
+                                   User_Id.Parse(WebUser),
+                                   I18NString.Create(WebUser),
+                                   SimpleEMailAddress.Parse($"{WebUser}@localhost"),
+                                   Password:                  WebPassword,
+                                   IsAuthenticated:           true,
+                                   SkipNewUserEMail:          true,
+                                   SkipNewUserNotifications:  true,
+                                   SkipDefaultNotifications:  true
+                               ),
+                        Is.Not.Null,
+                        "the account the browser signs in as");
+
+            var browser = new HttpClient(new HttpClientHandler {
+                                             CookieContainer    = new CookieContainer(),
+                                             UseCookies         = true,
+                                             AllowAutoRedirect  = false
+                                         }) {
+                              BaseAddress = new Uri($"http://127.0.0.1:{web!.TCPPort}/"),
+                              Timeout     = TimeSpan.FromSeconds(30)
+                          };
+
+            var signIn = await Post(browser, "api/auth/login",
+                                    new JObject(new JProperty("login",    WebUser),
+                                                new JProperty("password", WebPassword)));
+
+            Assert.That(signIn.IsSuccessStatusCode, Is.True, "the sign-in");
+
+            return browser;
+
+        }
+
+        private static Task<HttpResponseMessage> Post(HttpClient Browser, String Path, JObject JSON)
+
+            => Browser.PostAsync(Path, new StringContent(JSON.ToString(), Encoding.UTF8, "application/json"));
+
+        private String MessagesPath
+            => $"api/v1/rooms/{Uri.EscapeDataString(RoomJid.ToString())}/messages";
+
+        /// <summary>
+        /// The last stanza this app sent that carries the given namespace.
+        /// </summary>
+        private static XElement LastSent(XMPPSession Session, String Namespace)
+            => XElement.Parse(Session.Received.Last(frame => frame.Contains(Namespace, StringComparison.Ordinal)));
 
         #endregion
 
@@ -733,6 +796,258 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                         Is.EqualTo("what Alice said"),
                         "Somebody else emptied her line by naming its id, and it still carries " +
                         "her name.");
+
+        }
+
+        #endregion
+
+        #region AnAnswerInARoomPointsAtTheRoomsNameForTheLine()
+
+        /// <summary>
+        /// XEP-0461 in a room, from this side.
+        /// </summary>
+        /// <remarks>
+        /// <b>The reference is the name the room gave the line</b> (section 4):
+        /// the id on the stanza is the sender's, and everybody present may see a
+        /// different one. Pointing at it points, for every other reader, at a
+        /// line that is not the one that was meant - or at nothing.
+        ///
+        /// And the quotation says whose words they were, because in a room
+        /// there is more than one person they could be from.
+        /// </remarks>
+        [Test]
+        public async Task AnAnswerInARoomPointsAtTheRoomsNameForTheLine()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='groupchat' id='hers-1'>" +
+                    "<body>Shall we meet at eight?</body>" +
+                    $"<stanza-id xmlns='urn:xmpp:sid:0' id='room-7' by='{RoomJid}'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.RetractableId == "room-7"), "her line");
+
+            using var browser = await BrowserAsync();
+
+            var answer = await Post(browser, MessagesPath,
+                                    new JObject(new JProperty("body",       "Eight is fine"),
+                                                new JProperty("repliesTo",  "hers-1")));
+
+            Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.Created), await answer.Content.ReadAsStringAsync());
+
+            await Until(() => session.CountReceived(MessageReply.Namespace) > 0, "the answer on the wire");
+
+            var stanza    = LastSent(session, MessageReply.Namespace);
+            var reply     = stanza.Element(XName.Get("reply",    MessageReply.Namespace));
+            var fallback  = stanza.Elements().FirstOrDefault(element => element.Name.LocalName == "fallback");
+            var mine      = Lines().Single(line => line.Mine);
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(stanza.Attribute("type")?.Value,  Is.EqualTo("groupchat"));
+
+                Assert.That(reply?.Attribute("id")?.Value,    Is.EqualTo("room-7"),
+                            "The answer named the id on her stanza rather than the room's name for " +
+                            "the line, which other readers of the room may never have seen.");
+
+                Assert.That(reply?.Attribute("to")?.Value,    Is.EqualTo($"{RoomJid}/alice"));
+
+                Assert.That(fallback?.Attribute("for")?.Value, Is.EqualTo(MessageReply.Namespace),
+                            "The quoted lines went out unmarked, so a client that shows its own " +
+                            "quotation shows this one as well.");
+
+                Assert.That(stanza.Elements().First(element => element.Name.LocalName == "body").Value,
+                            Is.EqualTo("> alice:\n> Shall we meet at eight?\nEight is fine"));
+
+                Assert.That(mine.Body,       Is.EqualTo("Eight is fine"), "the quotation stays out of the text");
+                Assert.That(mine.RepliesTo,  Is.EqualTo("room-7"));
+                Assert.That(mine.Quote,      Is.EqualTo("> alice:\n> Shall we meet at eight?\n"));
+
+            });
+
+        }
+
+        #endregion
+
+        #region APrivateWordIsNotAnsweredInTheRoom()
+
+        /// <summary>
+        /// XEP-0045, section 7.5, from the other side: an answer goes to the whole
+        /// room and carries what it answers along.
+        /// </summary>
+        /// <remarks>
+        /// For a word said to us alone that is repeating it out loud to
+        /// everybody present, in the speaker's name.
+        /// </remarks>
+        [Test]
+        public async Task APrivateWordIsNotAnsweredInTheRoom()
+        {
+
+            var session = await JoinAsync();
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/alice' to='{api!.Client!.FullJid}' type='chat' id='pm-1'>" +
+                    "<body>for you alone</body>" +
+                    "<x xmlns='http://jabber.org/protocol/muc#user'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.Private), "the private word");
+
+            using var browser = await BrowserAsync();
+
+            var answer = await Post(browser, MessagesPath,
+                                    new JObject(new JProperty("body",       "Sure!"),
+                                                new JProperty("repliesTo",  "pm-1")));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.Conflict),
+                            "An answer to a private word was sent to the whole room, quoting it.");
+
+                Assert.That(session.CountReceived("for you alone"), Is.EqualTo(0),
+                            "The private word went back out to the room.");
+
+                Assert.That(Lines().Any(line => line.Mine), Is.False);
+
+            });
+
+        }
+
+        #endregion
+
+        #region OurOwnLineIsTakenBackByTheNameItsReflectionBrought()
+
+        /// <summary>
+        /// XEP-0359 and XEP-0424: a line of ours learns its name in the room
+        /// from its reflection, and is taken back under that name.
+        /// </summary>
+        /// <remarks>
+        /// <b>The line put in on sending cannot know the name</b> - the room
+        /// gives it on the way through - and the reflection, which is dropped
+        /// as a duplicate, was the only stanza that carries it. Until it was
+        /// read, nothing this app said in a room could be taken back: the
+        /// page named the line by its id and the route looked for the room's
+        /// name, which no line of ours ever had.
+        /// </remarks>
+        [Test]
+        public async Task OurOwnLineIsTakenBackByTheNameItsReflectionBrought()
+        {
+
+            var session  = await JoinAsync();
+
+            using var browser = await BrowserAsync();
+
+            var said     = await Post(browser, MessagesPath, new JObject(new JProperty("body", "something hasty")));
+
+            Assert.That(said.StatusCode, Is.EqualTo(HttpStatusCode.Created), await said.Content.ReadAsStringAsync());
+
+            var id       = JObject.Parse(await said.Content.ReadAsStringAsync())["message"]!.Value<String>("id")!;
+
+            await session.SendAsync(
+                $"<message from='{RoomJid}/me' to='{api!.Client!.FullJid}' type='groupchat' id='{id}'>" +
+                    "<body>something hasty</body>" +
+                    $"<stanza-id xmlns='urn:xmpp:sid:0' id='room-9' by='{RoomJid}'/>" +
+                "</message>");
+
+            await Until(() => Lines().Any(line => line.RetractableId == "room-9"), "the line to learn its name");
+
+            Assert.That(Lines(), Has.Count.EqualTo(1), "The reflection was shown as a second line.");
+
+            var taken    = await Post(browser, MessagesPath, new JObject(new JProperty("retracts", id)));
+
+            Assert.That(taken.StatusCode, Is.EqualTo(HttpStatusCode.OK), await taken.Content.ReadAsStringAsync());
+
+            await Until(() => session.CountReceived("urn:xmpp:message-retract:1") > 0, "the retraction on the wire");
+
+            var retract  = LastSent(session, "urn:xmpp:message-retract:1")
+                               .Elements().First(element => element.Name.LocalName == "retract");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(retract.Attribute("id")?.Value, Is.EqualTo("room-9"),
+                            "The retraction named the id on our stanza rather than the room's name " +
+                            "for the line (XEP-0424 in a group chat).");
+
+                Assert.That(Lines()[0].Retracted, Is.True);
+                Assert.That(Lines()[0].Body,      Is.Empty);
+
+            });
+
+        }
+
+        #endregion
+
+        #region OurCorrectionsNameTheOriginalAndKeepTheLine()
+
+        /// <summary>
+        /// XEP-0308 in a room, from this side: every correction names the
+        /// original line, and the line keeps its id and its place.
+        /// </summary>
+        /// <remarks>
+        /// Section 5 since 1.1.0: the payload is replaced, not the identity of
+        /// the message, and a correction of a correction names the original
+        /// again. A line that took the id of each correction stanza was a new
+        /// line to the page, and the reflection of the correction - carrying
+        /// the original's id in its &lt;replace/&gt; - named a line that was no
+        /// longer there.
+        /// </remarks>
+        [Test]
+        public async Task OurCorrectionsNameTheOriginalAndKeepTheLine()
+        {
+
+            var session  = await JoinAsync();
+
+            using var browser = await BrowserAsync();
+
+            var said     = await Post(browser, MessagesPath, new JObject(new JProperty("body", "the wrogn word")));
+            var id       = JObject.Parse(await said.Content.ReadAsStringAsync())["message"]!.Value<String>("id")!;
+
+            var first    = await Post(browser, MessagesPath, new JObject(new JProperty("body", "the wrnog word"), new JProperty("corrects", true)));
+
+            Assert.That(first.StatusCode,  Is.EqualTo(HttpStatusCode.OK), await first.Content.ReadAsStringAsync());
+
+            var second   = await Post(browser, MessagesPath, new JObject(new JProperty("body", "the right word"), new JProperty("corrects", true)));
+
+            Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK), await second.Content.ReadAsStringAsync());
+
+            await Until(() => session.CountReceived("urn:xmpp:message-correct:0") >= 2, "both corrections on the wire");
+
+            var named    = session.Received
+                                  .Where (frame => frame.Contains("urn:xmpp:message-correct:0", StringComparison.Ordinal))
+                                  .Select(frame => XElement.Parse(frame).Elements()
+                                                           .First(element => element.Name.LocalName == "replace")
+                                                           .Attribute("id")?.Value)
+                                  .ToList();
+
+            // The room hands the second correction back, as it hands back
+            // everything; it names the original, and must change nothing.
+            await session.SendAsync(
+                $"<message from='{RoomJid}/me' to='{api!.Client!.FullJid}' type='groupchat' id='fix-2'>" +
+                    "<body>the right word</body>" +
+                    $"<replace id='{id}' xmlns='urn:xmpp:message-correct:0'/>" +
+                "</message>");
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(named, Is.EqualTo(new[] { id, id }),
+                            "A correction named the previous correction instead of the original line.");
+
+                Assert.That(Lines(), Has.Count.EqualTo(1),
+                            "The corrected line or the reflection of the correction stood as a line of its own.");
+
+                Assert.That(Lines()[0].Id,         Is.EqualTo(id), "The line took the id of a correction stanza.");
+                Assert.That(Lines()[0].Body,       Is.EqualTo("the right word"));
+                Assert.That(Lines()[0].Corrected,  Is.True);
+
+            });
 
         }
 
