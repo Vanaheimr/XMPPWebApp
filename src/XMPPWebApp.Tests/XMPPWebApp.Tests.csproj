@@ -24,8 +24,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The frontend is not needed to test the backend, and a test run should not start npm. -->
-    <ProjectReference Include="..\XMPPWebApp\XMPPWebApp.csproj" AdditionalProperties="SkipFrontendBuild=true" />
+    <!--
+      The frontend is not needed to test the backend, and a test run of this
+      project on its own should not start npm.
+
+      Only on its own, though. A solution that holds this project holds
+      XMPPWebApp too and builds it with its frontend anyway; asking for it once
+      more with SkipFrontendBuild made a second project instance of it with
+      the same output path, and after a clean the two wrote XMPPWebApp.dll at
+      the same time. Inside a solution the reference is therefore the plain one
+      and resolves to the instance the solution builds.
+    -->
+    <ProjectReference Include="..\XMPPWebApp\XMPPWebApp.csproj" Condition="'$(SolutionPath)' == '' Or '$(SolutionPath)' == '*Undefined*'" AdditionalProperties="SkipFrontendBuild=true" />
+    <ProjectReference Include="..\XMPPWebApp\XMPPWebApp.csproj" Condition="'$(SolutionPath)' != '' And '$(SolutionPath)' != '*Undefined*'" />
   </ItemGroup>
 
 </Project>
