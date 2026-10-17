@@ -644,12 +644,11 @@ class RoomView {
     }
 
     /**
-     * XEP-0308: the line an edit would replace, or null.
-     *
-     * The rule the server applies - the last line said from here that still
-     * stands, and not a private one - and then null for the one it refuses: a
-     * line that went encrypted, whose correction could only go out in the
-     * clear.
+     * XEP-0308: the line an edit would replace, or null - the rule the server
+     * applies: the last line said from here that still stands, and not a
+     * private one. A line that went encrypted is corrected encrypted; the
+     * server refuses only when the room can no longer carry that, and says
+     * why.
      */
     private editableLine(): RoomMessage | null {
 
@@ -665,7 +664,7 @@ class RoomView {
             if (!line.mine || line.retracted || line.private)
                 continue;
 
-            return line.encrypted ? null : line;
+            return line;
 
         }
 

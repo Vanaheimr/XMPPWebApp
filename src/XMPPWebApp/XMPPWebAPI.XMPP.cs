@@ -475,6 +475,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             client.OnRoomJoined          += (timestamp, sender, room,         ct) => { if (Mine(client)) RoomJoined(client, room);      return Task.CompletedTask; };
             client.OnRoomLeft            += (timestamp, sender, room, why,    ct) => { if (Mine(client)) Rooms.Left(room.Address);      return Task.CompletedTask; };
 
+            // XEP-0359: an encrypted line of ours came back from its room. It
+            // cannot be read - no OMEMO element carries a key for the device
+            // that made it - but the name the room gave it can, and that name
+            // is what an answer and a retraction use there. A plain line
+            // learns it in HandleRoomMessage; this is the same, for the lane
+            // where nothing else of the reflection is readable.
+            client.OnOwnRoomLineNamed    += (timestamp, sender, from, id, named, ct) => {
+                                                if (Mine(client) && from.Resourcepart is String nick)
+                                                    Rooms.Named(from.Bare, id, nick, named);
+                                                return Task.CompletedTask;
+                                            };
+
             // XEP-0045, section 10.9. Its own line and not the one above, and
             // that is the whole reason this was written: until D130 a
             // destruction arrived as an ordinary departure and this row
@@ -651,6 +663,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return;
             }
 
+            // A decrypted message is heard here as well - the library raises
+            // it a second time for whoever does not know OMEMO - and it has
+            // been filed already, by HandleEncrypted, with what this path does
+            // not have: how the sending device's key stood, and which way an
+            // encrypted carbon went. Filed again here a correction would be
+            // applied twice, the second time taking the lock off the line.
+            if (Message.Decrypted)
+                return;
+
             // XEP-0424: somebody took something back. Before the branches
             // below, because a retraction carries a body - the fallback
             // sentence for clients that cannot do this - and filing that as a
@@ -821,20 +842,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// the library compared against it (XEP-0420) - the outer one anybody
         /// can write.
         ///
-        /// <b>An answer is an answer here too.</b> The library reads the
-        /// reference and the marking of the quotation from inside the envelope
-        /// (XEP-0420) - and only from there, because the stanza around it is
-        /// anybody's to rewrite - so the line keeps Text, RepliesTo and Quote
-        /// apart exactly as a plain one does.
-        ///
-        /// <b>What arrives here is still poorer than what the ordinary path
-        /// gets.</b> The decrypting side of Ratatoskr builds its message without
-        /// the delivered-late stamp of XEP-0203 and without the correction id of
-        /// XEP-0308, so an encrypted message that was held shows the time it
-        /// arrived, and an encrypted correction becomes a second line instead of
-        /// replacing the first. That is a gap in the library and not something
-        /// to paper over here; it is written down rather than worked around
-        /// silently.
+        /// <b>An answer, a correction and a retraction are what they are here
+        /// too.</b> The library reads the reference and the quotation's
+        /// marking (XEP-0461), the &lt;replace/&gt; (XEP-0308) and the
+        /// &lt;retract/&gt; (XEP-0424) from inside the envelope (XEP-0420) -
+        /// and only from there, because the stanza around it is anybody's to
+        /// rewrite - and the stamp of a message that was held (XEP-0203) from
+        /// outside, where only a server can put it. So an encrypted line is
+        /// filed exactly as a plain one: the same routing for a retraction
+        /// before anything looks at the body, the same correction in place,
+        /// the same time it was written rather than the time it arrived.
         ///
         /// <b>What reaches this method is
         /// <see cref="OmemoIdentityCheck.New"/> or
@@ -852,6 +869,32 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (String.IsNullOrEmpty(Message.Body))
                 return;
 
+            // XEP-0424: taken back, encrypted. Before everything else for the
+            // reason HandleMessage gives - a retraction carries the fallback
+            // sentence as its body, and filed as a line it would stand there
+            // as though somebody had typed it.
+            if (Message.RetractsId is String taken)
+            {
+
+                if (Message.Type is MessageType.GroupChat)
+                {
+                    if (Message.From.Resourcepart is String who)
+                        Rooms.Retract(Message.FromBareJid, who, taken);
+                }
+
+                else
+                {
+                    // Our own other device taking back our line is a carbon
+                    // of a retraction that went out; the far end taking back
+                    // theirs is one that came in.
+                    var (conversation, ours) = EncryptedBelongsTo(Message, Settings?.BareJID);
+                    Chats.Retract(conversation, taken, Incoming: !ours);
+                }
+
+                return;
+
+            }
+
             // A room, and it goes the room way. Nothing below applies: there is
             // no carbon of a groupchat message and no "which conversation is
             // this" to work out - the address is the room, and the nickname on
@@ -862,7 +905,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return;
             }
 
-            var now                = DateTimeOffset.UtcNow;
+            var written            = new DateTimeOffset(Message.Timestamp);
             var (chat, outgoing)   = EncryptedBelongsTo(Message, Settings?.BareJID);
 
             if (outgoing)
@@ -872,11 +915,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     chat,
                     Message.MessageId ?? Guid.NewGuid().ToString("N"),
                     Message.Text,
-                    now,
+                    written,
                     Carbon:     true,
                     Identity:   Omemo.IdentityCheck,
                     RepliesTo:  Message.RepliesTo?.Id,
-                    Quote:      Message.Quote
+                    Quote:      Message.Quote,
+                    Corrects:   Message.ReplacesId
                 );
 
                 return;
@@ -888,7 +932,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 Message.From.ToString(),
                 Message.MessageId,
                 Message.Text,
-                now,
+                written,
+                Delayed:    Message.IsDelayed,
+                Corrects:   Message.ReplacesId,
                 Identity:   Omemo.IdentityCheck,
                 RepliesTo:  Message.RepliesTo?.Id,
                 Quote:      Message.Quote
@@ -1222,6 +1268,22 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (String.IsNullOrEmpty(Carbon.Body))
                 return;
 
+            // XEP-0424, seen from another device of ours: either it took back
+            // a line of ours, or it received the far end taking back one of
+            // theirs. Before the line is filed, for the reason HandleMessage
+            // gives - the body is only the fallback sentence.
+            if (Carbon.RetractsId is String taken)
+            {
+
+                if (Carbon.IsSent)
+                    Chats.Retract(Carbon.OriginalTo.Bare,   taken, Incoming: false);
+                else
+                    Chats.Retract(Carbon.OriginalFrom.Bare, taken, Incoming: true);
+
+                return;
+
+            }
+
             // XEP-0461: Text and not Body, for the reason HandleMessage gives -
             // an answer written on another device of ours carries its
             // quotation like any other, and it belongs beside the text and not
@@ -1234,7 +1296,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     new DateTimeOffset(Carbon.ReceivedAt),
                     Carbon:     true,
                     RepliesTo:  Carbon.RepliesTo?.Id,
-                    Quote:      Carbon.Quote
+                    Quote:      Carbon.Quote,
+                    Corrects:   Carbon.ReplacesId
                 );
 
             else
@@ -1245,6 +1308,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     Carbon.Text ?? Carbon.Body,
                     new DateTimeOffset(Carbon.ReceivedAt),
                     Carbon:     true,
+                    Corrects:   Carbon.ReplacesId,
                     RepliesTo:  Carbon.RepliesTo?.Id,
                     Quote:      Carbon.Quote
                 );

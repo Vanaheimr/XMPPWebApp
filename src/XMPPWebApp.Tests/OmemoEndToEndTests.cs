@@ -661,6 +661,146 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AnEncryptedLine_IsCorrectedAndTakenBackEncrypted_BothWays()
+
+        /// <summary>
+        /// XEP-0308 and XEP-0424 under OMEMO, in both directions: an encrypted
+        /// line can be corrected and taken back from here, and a correction or
+        /// a retraction that arrives encrypted does what it says.
+        /// </summary>
+        /// <remarks>
+        /// Until now an encrypted line could not be edited at all - the only
+        /// correction this app could send went in the clear, carrying the
+        /// encrypted words - and the far end's encrypted correction arrived as
+        /// a second line, its retraction as a line with the fallback sentence.
+        /// Nothing about which line was meant may stand on the wire either.
+        /// </remarks>
+        [Test]
+        public async Task AnEncryptedLine_IsCorrectedAndTakenBackEncrypted_BothWays()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                var me    = JID.Parse($"me@{xmpp!.Domain}");
+                var peer  = JID.Parse($"alice@{xmpp.Domain}");
+
+                var atAlice = new List<XMPPMessage>();
+                alice.OnEncryptedMessage += (timestamp, sender, message, _, ct) => { lock (atAlice) atAlice.Add(message); return Task.CompletedTask; };
+
+                // Her line, corrected by her.
+                var hers = await alice.SendEncryptedMessageAsync(me, "Shall we meat at eight?");
+                await Until(() => Lines().Count == 1, "her line");
+
+                await alice.SendEncryptedCorrectionAsync(me, "Shall we meet at eight?", hers.MessageId);
+                await Until(() => Lines().Single().Corrected, "her correction");
+
+                // A moment for anything that would hear the same message twice.
+                await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+                var herCorrected = Lines().Single();
+
+                // Our line, corrected and then taken back from here.
+                var ours = await Send(peer.ToString(), "Eight is fien");
+                await Until(() => { lock (atAlice) return atAlice.Count == 1; }, "our line at Alice");
+
+                var (corrected, notCorrected) = await api.CorrectAsync(peer, "Eight is fine");
+                Assert.That(corrected, Is.Not.Null, notCorrected);
+                await Until(() => { lock (atAlice) return atAlice.Count == 2; }, "our correction at Alice");
+
+                var (taken, notTaken) = await api.TakeBackAsync(peer, ours.Id);
+                Assert.That(taken, Is.Not.Null, notTaken);
+                await Until(() => { lock (atAlice) return atAlice.Count == 3; }, "our retraction at Alice");
+
+                // And she takes hers back.
+                await alice.SendEncryptedRetractionAsync(me, hers.MessageId);
+                await Until(() => Lines().First().Retracted, "her retraction");
+
+                var lines    = Lines();
+                var messages = xmpp.Sessions
+                                   .SelectMany(session => session.Received.Concat(session.Sent))
+                                   .Where     (frame   => frame.StartsWith("<message", StringComparison.Ordinal))
+                                   .ToList();
+
+                api.Chats.Snapshot(out var chats);
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(herCorrected.Body,       Is.EqualTo("Shall we meet at eight?"));
+                    Assert.That(herCorrected.Encrypted,  Is.True,
+                                "Her encrypted correction took the lock off her line - the decrypted " +
+                                "message was filed a second time as a plain one.");
+
+                    Assert.That(chats.Select(chat => chat.Jid.ToString()), Is.EqualTo(new[] { peer.ToString() }),
+                                "A conversation was opened that is not the one with Alice.");
+
+                    Assert.That(lines, Has.Count.EqualTo(2),
+                                "A correction or a retraction stood as a line of its own.");
+
+                    Assert.That(lines[0].Id,         Is.EqualTo(hers.MessageId));
+                    Assert.That(lines[0].Corrected,  Is.True);
+                    Assert.That(lines[0].Retracted,  Is.True, "her encrypted retraction did nothing here");
+
+                    Assert.That(corrected!.Id,        Is.EqualTo(ours.Id), "our corrected line took another id");
+                    Assert.That(corrected.Body,       Is.EqualTo("Eight is fine"));
+                    Assert.That(corrected.Encrypted,  Is.True);
+
+                    Assert.That(lines[1].Retracted,  Is.True);
+
+                    Assert.That(atAlice[1].ReplacesId, Is.EqualTo(ours.Id),
+                                "our encrypted correction arrived as a line that replaces nothing");
+                    Assert.That(atAlice[1].Body,       Is.EqualTo("Eight is fine"));
+                    Assert.That(atAlice[2].RetractsId, Is.EqualTo(ours.Id),
+                                "our encrypted retraction arrived as a line that takes nothing back");
+
+                    Assert.That(messages.Any(frame => frame.Contains(MessageCorrection.Namespace, StringComparison.Ordinal) ||
+                                                      frame.Contains(MessageRetraction.Namespace, StringComparison.Ordinal)),
+                                Is.False,
+                                "Which line was corrected or taken back stood beside the encryption, in the clear.");
+
+                    Assert.That(messages.Any(frame => frame.Contains("Eight is fine", StringComparison.Ordinal)),
+                                Is.False,
+                                "The corrected words stand in a stanza the server has seen.");
+
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// The lines of the one conversation, oldest first.
+        /// </summary>
+        private IReadOnlyList<ChatMessage> Lines()
+        {
+
+            api!.Chats.Snapshot(out var chats);
+
+            if (chats.Count == 0 ||
+                !api.Chats.TrySnapshot(chats[0].Jid, out _, out _, out var messages))
+            {
+                return [];
+            }
+
+            return messages;
+
+        }
+
+        #endregion
+
         #region WritingToSomebodyWithoutOmemo_GoesOutInTheClear()
 
         /// <summary>

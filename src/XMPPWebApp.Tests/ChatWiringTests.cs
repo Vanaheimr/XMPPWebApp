@@ -201,6 +201,71 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region WhatAnotherDeviceOfOursCorrectsOrTakesBack_IsCorrectedOrTakenBackHere()
+
+        /// <summary>
+        /// XEP-0280 with XEP-0308 and XEP-0424: a line of ours corrected or
+        /// taken back on another device of ours.
+        /// </summary>
+        /// <remarks>
+        /// The carbon used to bring the body and nothing else, so the
+        /// correction stood here as a second line beside the line it corrects,
+        /// and the retraction as the fallback sentence beside the words it was
+        /// meant to take away.
+        /// </remarks>
+        [Test]
+        public async Task WhatAnotherDeviceOfOursCorrectsOrTakesBack_IsCorrectedOrTakenBackHere()
+        {
+
+            var session  = await SessionAsync();
+            var me       = api!.Client!.BareJid;
+            var alice    = JID.Parse($"alice@{xmpp!.Domain}");
+
+            String Carbon(String Id, String Inner)
+
+                => $"<message from='{me}' to='{api.Client.FullJid}'>" +
+                       "<sent xmlns='urn:xmpp:carbons:2'>" +
+                           "<forwarded xmlns='urn:xmpp:forward:0'>" +
+                               $"<message xmlns='jabber:client' from='{me}/phone' to='{alice}' type='chat' id='{Id}'>" +
+                                   Inner +
+                               "</message>" +
+                           "</forwarded>" +
+                       "</sent>" +
+                   "</message>";
+
+            await session.SendAsync(Carbon("p1", "<body>the wrogn word</body>"));
+            await session.SendAsync(Carbon("p2", "<body>another line</body>"));
+
+            await Until(() => Lines(alice).Count == 2, "both lines from the phone");
+
+            await session.SendAsync(Carbon("p3", "<body>the right word</body>" + MessageCorrection.ReplaceXml("p1")));
+            await session.SendAsync(Carbon("p4", $"<body>{XmlEscaping.Escape(MessageRetraction.FallbackBody)}</body>" +
+                                                 MessageRetraction.Extras("p2")));
+
+            await Until(() => Lines(alice).Any(line => line.Retracted), "the retraction from the phone");
+
+            var lines = Lines(alice);
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(lines, Has.Count.EqualTo(2),
+                            "The correction or the retraction stood as a line of its own.");
+
+                Assert.That(lines[0].Id,         Is.EqualTo("p1"));
+                Assert.That(lines[0].Body,       Is.EqualTo("the right word"));
+                Assert.That(lines[0].Corrected,  Is.True);
+
+                Assert.That(lines[1].Id,         Is.EqualTo("p2"));
+                Assert.That(lines[1].Body,       Is.Empty);
+                Assert.That(lines[1].Retracted,  Is.True);
+
+            });
+
+        }
+
+        #endregion
+
     }
 
 }

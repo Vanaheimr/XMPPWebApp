@@ -1134,9 +1134,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // The correction names the original line, a correction of a
             // correction included (section 5), and the line keeps its id.
             //
-            // Refused where that line went encrypted, for the reason a
-            // conversation is: the correction can only go out in the clear,
-            // and it would carry the very text that was encrypted.
+            // It travels the way its line did, for the reason a conversation's
+            // does (CorrectAsync): a line that went encrypted is corrected
+            // encrypted, and refused rather than corrected in the clear when
+            // the room can no longer carry an encrypted one.
             if (json.Value<Boolean?>("corrects") == true)
             {
 
@@ -1145,15 +1146,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                      "Nothing has been said here yet, so there is nothing to correct.");
 
                 if (line.Encrypted)
-                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                     "That line went encrypted, and a correction would go out in " +
-                                     "the clear - carrying the very text that was encrypted. Say " +
-                                     "the line again instead, or take it back.");
+                {
 
-                await client.Connection.SendMessageAsync(jid.Bare,
-                                                         body,
-                                                         type:      MessageType.GroupChat,
-                                                         corrects:  line.Id);
+                    if (!client.OmemoEnabled)
+                        return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                         "That line went encrypted, and encryption is not on here now. " +
+                                         "A correction in the clear would carry the very text that was " +
+                                         "encrypted - say the line again instead.");
+
+                    var sent = await client.SendEncryptedRoomCorrectionAsync(jid, body, line.Id);
+
+                    if (!sent.Sent)
+                        return ErrorJSON(Request, HTTPStatusCode.Conflict,
+                                         $"The correction could not be encrypted: {sent.Refusal ?? "nobody here could read it"}. " +
+                                         "In the clear it would carry the very text that was encrypted.");
+
+                }
+
+                else
+                    await client.Connection.SendMessageAsync(jid.Bare,
+                                                             body,
+                                                             type:      MessageType.GroupChat,
+                                                             corrects:  line.Id);
 
                 return JSONResponse(Request, HTTPStatusCode.OK,
                                     Rooms.CorrectOwn(jid, line.Id, body)?.ToJSON()
@@ -1777,14 +1791,25 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             if (json.Value<String>("retracts") is String retracts && retracts.Length > 0)
             {
 
-                if (Chats.Retract(jid, retracts, Incoming: false) is not ChatMessage taken)
-                    return ErrorJSON(Request, HTTPStatusCode.NotFound,
-                                     "There is no line of ours by that name here. A retraction " +
-                                     "may only take back what this account said.");
+                if (Client is not { IsConnected: true })
+                    return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
 
-                await Client!.RetractMessageAsync(jid, retracts);
+                ChatMessage?  taken;
+                String?       notTaken;
 
-                return JSONResponse(Request, HTTPStatusCode.OK, taken.ToJSON());
+                try
+                {
+                    (taken, notTaken) = await TakeBackAsync(jid, retracts);
+                }
+                catch (Exception e)
+                {
+                    logger.LogWarning("Taking back a line to {Jid} failed: {Error}", jid, e.Message);
+                    return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"The line could not be taken back: {e.Message}");
+                }
+
+                return taken is null
+                           ? ErrorJSON(Request, HTTPStatusCode.NotFound, notTaken ?? "The line was not taken back.")
+                           : JSONResponse(Request, HTTPStatusCode.OK, taken.ToJSON());
 
             }
 
@@ -1800,45 +1825,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 return ErrorJSON(Request, HTTPStatusCode.ServiceUnavailable, NotConnectedText());
 
             // XEP-0308: "corrects": true means replace the last line this app
-            // sent here rather than say a new one.
-            //
-            // The line is the one the conversation shows, named by its id -
-            // not whatever the library remembers having sent last. That memory
-            // ends with the process, and a page that offers to edit the line
-            // in front of it after a restart would otherwise be told there is
-            // nothing to correct.
-            //
-            // Refused where that line went encrypted, and that is not
-            // timidity: a correction carries the corrected text, and this app
-            // can only send one in the clear. Sending it would put the very
-            // words that were encrypted a moment ago on the wire in plain -
-            // and it would look, to whoever reads the result, like a
-            // successful correction of an encrypted line. A line that went in
-            // the clear is corrected in the clear, which tells nobody anything
-            // the line had not told them already.
+            // sent here rather than say a new one - see CorrectAsync.
             if (json.Value<Boolean?>("corrects") == true)
             {
 
-                if (Chats.LastOwnLine(jid) is not ChatMessage line)
-                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                     "Nothing has gone out here yet, so there is nothing to correct.");
+                ChatMessage?  corrected;
+                String?       notCorrected;
 
-                if (line.Encrypted)
-                    return ErrorJSON(Request, HTTPStatusCode.Conflict,
-                                     "That line went encrypted, and a correction would go out " +
-                                     "in the clear - carrying the very text that was encrypted. " +
-                                     "Say the line again, or take it back.");
+                try
+                {
+                    (corrected, notCorrected) = await CorrectAsync(jid, body);
+                }
+                catch (Exception e)
+                {
+                    logger.LogWarning("Correcting a line to {Jid} failed: {Error}", jid, e.Message);
+                    return ErrorJSON(Request, HTTPStatusCode.BadGateway, $"The correction could not be sent: {e.Message}");
+                }
 
-                // XEP-0308, section 5: every correction names the original
-                // line, a correction of a correction included. Named here from
-                // the line on screen rather than through the library's
-                // CorrectLastMessageAsync, whose memory of what it sent ends
-                // with the process.
-                await Client!.Connection.SendMessageAsync(jid, body, corrects: line.Id);
-
-                return JSONResponse(Request, HTTPStatusCode.OK,
-                                    Chats.CorrectOutgoing(jid, line.Id, body)?.ToJSON()
-                                        ?? new JObject());
+                return corrected is null
+                           ? ErrorJSON(Request, HTTPStatusCode.Conflict, notCorrected ?? "The line was not corrected.")
+                           : JSONResponse(Request, HTTPStatusCode.OK, corrected.ToJSON());
 
             }
 
@@ -1886,6 +1892,119 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                            new JProperty("message",  message.ToJSON())
                        )
                    );
+
+        }
+
+        #endregion
+
+        #region (internal) CorrectAsync  (Jid, Body)
+
+        /// <summary>
+        /// XEP-0308: says the last line this app sent here again, properly.
+        /// </summary>
+        /// <remarks>
+        /// Apart from the route for the reason <see cref="SendToAsync"/> is.
+        ///
+        /// <b>The line is the one the conversation shows</b>, named by its id -
+        /// not whatever the library remembers having sent last. That memory
+        /// ends with the process, and a page offering to edit the line in
+        /// front of it after a restart would otherwise be told there is
+        /// nothing to correct. Every correction names the original line, a
+        /// correction of a correction included (section 5).
+        ///
+        /// <b>A correction travels the way its line did.</b> A line that went
+        /// encrypted is corrected encrypted, the &lt;replace/&gt; inside the
+        /// envelope; in the clear the correction would carry the very words
+        /// that were encrypted a moment ago, and it would look, to whoever
+        /// reads the result, like a correction of an encrypted line. So when
+        /// nobody at the far end can read an encrypted one any more, the
+        /// correction is refused rather than sent in the clear. A line that
+        /// went in the clear is corrected in the clear, which tells nobody
+        /// anything the line had not told them already.
+        /// </remarks>
+        /// <returns>
+        /// The line as it now stands, or null and the sentence that says why
+        /// it was not corrected.
+        /// </returns>
+        internal async Task<(ChatMessage? Message, String? Refusal)> CorrectAsync(JID     Jid,
+                                                                                 String  Body)
+        {
+
+            if (Client is not { IsConnected: true } client)
+                return (null, NotConnectedText());
+
+            if (Chats.LastOwnLine(Jid) is not ChatMessage line)
+                return (null, "Nothing has gone out here yet, so there is nothing to correct.");
+
+            if (line.Encrypted)
+            {
+
+                if (!client.OmemoEnabled)
+                    return (null, "That line went encrypted, and encryption is not on here now. A " +
+                                  "correction in the clear would carry the very text that was " +
+                                  "encrypted - say the line again, or take it back.");
+
+                var sent = await client.SendEncryptedCorrectionAsync(Jid, Body, line.Id);
+
+                if (!sent.Readable)
+                    return (null, "That line went encrypted, and nobody at the far end can read an " +
+                                  "encrypted correction now. In the clear it would carry the very " +
+                                  "text that was encrypted - say the line again, or take it back.");
+
+            }
+
+            else
+                await client.Connection.SendMessageAsync(Jid, Body, corrects: line.Id);
+
+            return (Chats.CorrectOutgoing(Jid, line.Id, Body), null);
+
+        }
+
+        #endregion
+
+        #region (internal) TakeBackAsync (Jid, MessageId)
+
+        /// <summary>
+        /// XEP-0424: takes back a line this app said here.
+        /// </summary>
+        /// <remarks>
+        /// <b>A line that went encrypted is taken back encrypted</b>, the
+        /// &lt;retract/&gt; inside the envelope, so that which line it was is
+        /// not said in the clear either. When nobody can read an encrypted one
+        /// any more, the plain retraction goes instead: unlike a correction it
+        /// carries no words, and a line that could not be taken back at all
+        /// would be worse than the name of it on the wire.
+        ///
+        /// Sent before the line is emptied here, so that a retraction that
+        /// could not be sent leaves the line as it was.
+        /// </remarks>
+        /// <returns>
+        /// The emptied line, or null and the sentence that says why there was
+        /// nothing to take back.
+        /// </returns>
+        internal async Task<(ChatMessage? Message, String? Refusal)> TakeBackAsync(JID     Jid,
+                                                                                  String  MessageId)
+        {
+
+            if (Client is not { IsConnected: true } client)
+                return (null, NotConnectedText());
+
+            if (Chats.Find(Jid, MessageId) is not ChatMessage line ||
+                line.Direction != MessageDirection.Outgoing ||
+                line.Retracted)
+            {
+                return (null, "There is no line of ours by that name here. A retraction may " +
+                              "only take back what this account said.");
+            }
+
+            var encrypted = line.Encrypted &&
+                            client.OmemoEnabled &&
+                            (await client.SendEncryptedRetractionAsync(Jid, MessageId)).Readable;
+
+            if (!encrypted)
+                await client.RetractMessageAsync(Jid, MessageId);
+
+            return (Chats.Retract(Jid, MessageId, Incoming: false), null);
 
         }
 

@@ -573,8 +573,9 @@ export const api = {
         /**
          * XEP-0308: replaces the last line sent here instead of saying a new one.
          *
-         * Refused where the conversation is encrypted - a correction can only go
-         * out in the clear, and it carries the text that was encrypted.
+         * A correction travels the way its line did: encrypted for a line that
+         * went encrypted, and refused when nobody can read an encrypted one any
+         * more - in the clear it would carry the text that was encrypted.
          */
         correct:   (chat: string, body: string)              => request<Message>('POST', `/chats/${jid(chat)}/messages`, { body, corrects: true }),
         /** XEP-0424: takes a line back. A request and not a deletion. */

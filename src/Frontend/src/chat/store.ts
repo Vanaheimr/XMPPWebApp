@@ -447,9 +447,10 @@ export class ChatStore {
     /**
      * XEP-0308: replaces the last line sent here.
      *
-     * Refused by the server where the conversation is encrypted — a correction
-     * can only go out in the clear, and it carries the text that was
-     * encrypted. The refusal is shown rather than worked around.
+     * Encrypted for a line that went encrypted. Refused by the server when
+     * nobody at the far end can read an encrypted correction any more - in
+     * the clear it would carry the text that was encrypted. The refusal is
+     * shown rather than worked around.
      */
     async correct(jid: string, body: string): Promise<Message> {
 

@@ -577,6 +577,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// another device of ours it is how that device's key stood when its
         /// line arrived here. Null for a line that went in the clear - the
         /// lock on a line says how that line travelled, and nothing else.
+        ///
+        /// <paramref name="Corrects"/> is a correction another device of ours
+        /// made (XEP-0308): it replaces the text of our line of that name, the
+        /// way an incoming correction replaces the far end's, and keeps the
+        /// line's place, time and id. Any line of ours - the correction comes
+        /// from this account, which is the sender the rule asks about - and
+        /// one that names nothing here becomes a line of its own, because a
+        /// correction of something never seen is still something said.
         /// </remarks>
         public ChatMessage AddOutgoing(JID                  Chat,
                                        String               MessageId,
@@ -585,12 +593,40 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                        Boolean              Carbon     = false,
                                        OmemoIdentityCheck?  Identity   = null,
                                        String?              RepliesTo  = null,
-                                       String?              Quote      = null)
+                                       String?              Quote      = null,
+                                       String?              Corrects   = null)
         {
             lock (@lock)
             {
 
                 var conversation = GetOrAdd(Chat.Bare);
+
+                if (Corrects is not null)
+                {
+
+                    var index = conversation.Messages.FindIndex(message => message.Id        == Corrects &&
+                                                                           message.Direction == MessageDirection.Outgoing &&
+                                                                           !message.Retracted);
+
+                    if (index >= 0)
+                    {
+
+                        // The identity travels with the text, as for an
+                        // incoming correction: what is displayed now went now.
+                        var corrected = conversation.Messages[index] with {
+                                            Body       = Body,
+                                            Corrected  = true,
+                                            Identity   = Identity
+                                        };
+
+                        conversation.Messages[index] = corrected;
+
+                        Changed(conversation);
+                        return Changed(corrected);
+
+                    }
+
+                }
 
                 if (conversation.Messages.FirstOrDefault(message => message.Id == MessageId) is ChatMessage known)
                     return known;

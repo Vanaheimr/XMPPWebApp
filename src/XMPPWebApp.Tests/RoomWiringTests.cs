@@ -995,12 +995,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// conversation and every room of this account travels on. One pasted
         /// character took all of them down.
         ///
-        /// <b>What is checked is the stanza, not the connection.</b> The test
-        /// server reads frames as text and forgives what a real one does not;
-        /// Prosody and ejabberd answer a stanza that is not well-formed XML
-        /// 1.0 with not-well-formed (RFC 6120, 4.9.3.13) and close the stream.
-        /// So the frame itself has to parse - which is the condition a real
-        /// server enforces, and the one this side controls.
+        /// <b>Checked twice: on the stanza and on the connection.</b> Prosody
+        /// and ejabberd answer a stanza that is not well-formed XML 1.0 with
+        /// not-well-formed (RFC 6120, 4.9.3.13) and close the stream, and so
+        /// does the test server since Ratatoskr learnt to - before that it read
+        /// frames as text and forgave this, which is how the gap went
+        /// unnoticed. The frame has to parse, which is the condition this side
+        /// controls, and the connection has to be standing afterwards.
         /// </remarks>
         [Test]
         public async Task AControlCharacterInALine_DoesNotEndTheConnection()
@@ -1133,6 +1134,75 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                             "Something was sent to the room the nickname was refused for.");
 
                 Assert.That(api.Client!.IsConnected, Is.True);
+
+            });
+
+        }
+
+        #endregion
+
+        #region OurEncryptedLineLearnsItsNameAndCanBeAnswered()
+
+        /// <summary>
+        /// XEP-0359 for an encrypted line of ours: its reflection cannot be
+        /// read, and it still brings the name the room gave the line.
+        /// </summary>
+        /// <remarks>
+        /// A plain line of ours learns its name from its reflection; an
+        /// encrypted one did not, because the library dropped the unreadable
+        /// reflection whole - name and all. So every encrypted line this app
+        /// said in a room could be neither answered nor taken back: both have
+        /// to point at the room's name for it.
+        /// </remarks>
+        [Test]
+        public async Task OurEncryptedLineLearnsItsNameAndCanBeAnswered()
+        {
+
+            var session = await JoinAsync(NonAnonymous: true);
+
+            await Until(() => api!.Client!.OmemoEnabled,            "the web app to announce its OMEMO device");
+            await Until(() => TheRoom()!.CannotEncrypt is null,     "the room to become one that can be encrypted in");
+
+            using var browser = await BrowserAsync();
+
+            var said    = await Post(browser, MessagesPath, new JObject(new JProperty("body", "Only for the people here.")));
+
+            Assert.That(said.StatusCode, Is.EqualTo(HttpStatusCode.Created), await said.Content.ReadAsStringAsync());
+
+            var line    = JObject.Parse(await said.Content.ReadAsStringAsync())["message"]!;
+            var id      = line.Value<String>("id")!;
+
+            Assert.That(line.Value<Boolean>("encrypted"), Is.True, "the line did not go encrypted - then this tests something else");
+
+            // The room hands it back: unreadable here, its name on the outside.
+            await Until(() => session.Received.Any(frame => frame.Contains($"id='{id}'", StringComparison.Ordinal)),
+                        "our encrypted line on the wire");
+
+            var sent      = session.Received.First(frame => frame.Contains($"id='{id}'", StringComparison.Ordinal));
+
+            var reflected = $"<message from='{RoomJid}/me' to='{api!.Client!.FullJid}' type='groupchat' id='{id}'>" +
+                            sent[(sent.IndexOf('>') + 1)..].Replace("</message>",
+                                                                   $"<stanza-id xmlns='urn:xmpp:sid:0' id='room-11' by='{RoomJid}'/></message>");
+
+            await session.SendAsync(reflected);
+
+            await Until(() => Lines().Any(line => line.RetractableId == "room-11"), "our encrypted line to learn its name");
+
+            // And now it can be answered.
+            var answer  = await Post(browser, MessagesPath,
+                                     new JObject(new JProperty("body",       "And so I answer myself."),
+                                                 new JProperty("repliesTo",  id)));
+
+            Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.Created), await answer.Content.ReadAsStringAsync());
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(Lines().Count(line => line.Mine), Is.EqualTo(2),
+                            "The reflection stood as a line of its own.");
+
+                Assert.That(Lines().Single(line => line.Body == "And so I answer myself.").RepliesTo,
+                            Is.EqualTo("room-11"));
 
             });
 

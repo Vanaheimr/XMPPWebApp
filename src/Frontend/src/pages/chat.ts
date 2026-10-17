@@ -946,9 +946,9 @@ class ChatView {
      *
      * The rule the server applies - the last line sent from here that still
      * stands, so not a carbon of another device and not a line taken back -
-     * and then null for the two it refuses or that make no sense: a line that
-     * went encrypted, whose correction could only go out in the clear, and a
-     * file.
+     * and then null for a file, whose text is its address. A line that went
+     * encrypted is corrected encrypted; the server refuses only when that is
+     * no longer possible, and says why.
      */
     private editableLine(): Message | null {
 
@@ -964,7 +964,7 @@ class ChatView {
             if (line.direction !== 'out' || line.carbon || line.retracted)
                 continue;
 
-            return line.encrypted || line.media !== null ? null : line;
+            return line.media !== null ? null : line;
 
         }
 
