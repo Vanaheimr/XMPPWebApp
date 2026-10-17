@@ -583,11 +583,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             try
             {
 
-                await alice.ConnectAsync();
-                await alice.EnableOmemoAsync();
-
+                // The app's device first, as AnEncryptedMessage_ArrivesWithItsLockOn
+                // has it: Alice learns whom she can encrypt to when she switches
+                // OMEMO on, and a device announced after that may be one she
+                // does not know of yet - her first line then reaches nobody
+                // here, now and then, depending on who was quicker.
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
                 await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
 
                 var me    = JID.Parse($"me@{xmpp!.Domain}");
                 var peer  = JID.Parse($"alice@{xmpp.Domain}");
@@ -684,11 +689,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             try
             {
 
-                await alice.ConnectAsync();
-                await alice.EnableOmemoAsync();
-
+                // The app's device first, as AnEncryptedMessage_ArrivesWithItsLockOn
+                // has it: Alice learns whom she can encrypt to when she switches
+                // OMEMO on, and a device announced after that may be one she
+                // does not know of yet - her first line then reaches nobody
+                // here, now and then, depending on who was quicker.
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
                 await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
 
                 var me    = JID.Parse($"me@{xmpp!.Domain}");
                 var peer  = JID.Parse($"alice@{xmpp.Domain}");
