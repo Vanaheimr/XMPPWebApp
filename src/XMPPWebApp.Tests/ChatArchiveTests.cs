@@ -124,6 +124,119 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         #endregion
 
 
+        #region Search_FindsTheLineAcrossMonthsAndNewestFirst()
+
+        /// <summary>
+        /// A search reaches the whole conversation, not the part that happens
+        /// to be loaded, and answers the most recent match first.
+        /// </summary>
+        /// <remarks>
+        /// Newest first is the whole ordering question: somebody searching a
+        /// long conversation is nearly always after the last time something was
+        /// said, not the first. The months are walked backwards for that, and
+        /// each month backwards within itself - the second half is easy to
+        /// leave out and only shows when two matches share a month.
+        /// </remarks>
+        [Test]
+        public async Task Search_FindsTheLineAcrossMonthsAndNewestFirst()
+        {
+
+            await using (var archive = Open())
+            {
+
+                archive.Record(Incoming(alice, "m1", "The key is under the mat",      september));
+                archive.Record(Outgoing(alice, "m2", "Which mat?",                     september.AddHours(1)));
+                archive.Record(Incoming(alice, "m3", "The one by the back door",       october));
+                archive.Record(Incoming(alice, "m4", "I moved the KEY to the shed",    october.AddHours(2)));
+                archive.Record(Incoming(bob,   "b1", "key",                            october));
+
+                await archive.FlushAsync();
+
+            }
+
+            await using var reader = Open();
+
+            var (found, hasMore) = reader.Search(alice, "key");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(found.Select(message => message.Id),
+                            Is.EqualTo(new[] { "m4", "m1" }),
+                            "newest first, across two months, and case does not matter");
+
+                Assert.That(hasMore, Is.False);
+
+                Assert.That(found.Any(message => message.Chat == bob), Is.False,
+                            "a search in one conversation must not reach into another");
+
+            });
+
+        }
+
+        #endregion
+
+        #region Search_StopsAtTheLimitAndSaysSo()
+
+        /// <summary>
+        /// A common word stops after a page instead of reading years of files.
+        /// </summary>
+        [Test]
+        public async Task Search_StopsAtTheLimitAndSaysSo()
+        {
+
+            await using (var archive = Open())
+            {
+
+                for (var i = 1; i <= 10; i++)
+                    archive.Record(Incoming(alice, $"m{i}", $"line {i} says yes", september.AddMinutes(i)));
+
+                await archive.FlushAsync();
+
+            }
+
+            await using var reader = Open();
+
+            var (found, hasMore) = reader.Search(alice, "yes", Limit: 3);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(found,                        Has.Count.EqualTo(3));
+                Assert.That(hasMore,                      Is.True);
+                Assert.That(found[0].Id,                  Is.EqualTo("m10"), "the most recent match comes first");
+            });
+
+        }
+
+        #endregion
+
+        #region Search_ForNothing_FindsNothing()
+
+        /// <summary>
+        /// An empty needle is not a way to ask for the whole archive.
+        /// </summary>
+        [Test]
+        public async Task Search_ForNothing_FindsNothing()
+        {
+
+            await using (var archive = Open())
+            {
+                archive.Record(Incoming(alice, "m1", "something", september));
+                await archive.FlushAsync();
+            }
+
+            await using var reader = Open();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(reader.Search(alice, "").Messages,    Is.Empty);
+                Assert.That(reader.Search(alice, "   ").Messages, Is.Empty);
+            });
+
+        }
+
+        #endregion
+
         #region AMessage_LandsInTheDirectoryOfItsChatAndTheFileOfItsMonth()
 
         [Test]

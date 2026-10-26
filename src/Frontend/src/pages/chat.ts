@@ -19,6 +19,9 @@ import { errorMessage, excerpt, formatBytes, formatDay, formatListTime, formatTi
 
 const TITLE            = 'XMPP WebApp';
 const TYPING_PAUSE_MS  = 4000;
+/** How long typing settles before a search is asked for. */
+const SEARCH_WAIT_MS = 250;
+
 const TOAST_MS         = 8000;
 
 /** How close to the top a scroll comes before the next page of the past is asked for. */
@@ -73,6 +76,8 @@ export const chatPage: Page = {
 
                     <div id="messages" class="messages" aria-live="polite"></div>
 
+                    <div id="results" class="results" hidden></div>
+
                     <div id="composer-context" class="composer-context" hidden></div>
 
                     <form id="composer" class="composer">
@@ -110,6 +115,13 @@ class ChatView {
     private readonly peer:       HTMLElement;
     private readonly banner:     HTMLElement;
     private readonly messages:   HTMLElement;
+    private readonly results:    HTMLElement;
+
+    /**
+     * The search a keystroke is waiting on, so that typing does not ask once
+     * per letter. Cleared when the chat changes.
+     */
+    private searching: number | null = null;
     private readonly context:    HTMLElement;
     private readonly composer:   HTMLFormElement;
     private readonly fileInput:  HTMLInputElement;
@@ -150,6 +162,7 @@ class ChatView {
         this.peer        = must(element, '#peer');
         this.banner      = must(element, '#banner');
         this.messages    = must(element, '#messages');
+        this.results     = must(element, '#results');
         this.context     = must(element, '#composer-context');
         this.composer    = must<HTMLFormElement>(element, '#composer');
         this.fileInput   = must<HTMLInputElement>(element, '#file');
@@ -308,6 +321,16 @@ class ChatView {
 
         if (this.replyingTo !== null)
             this.stopReplying();
+
+        // And so does a result list: it belongs to the conversation it was
+        // searched in, and a search still waiting on a keystroke would answer
+        // into the next one.
+        if (this.searching !== null) {
+            window.clearTimeout(this.searching);
+            this.searching = null;
+        }
+
+        this.closeResults();
 
         if (this.current !== null) {
             this.drafts.set(this.current, this.textarea.value);
@@ -549,6 +572,9 @@ class ChatView {
                 <div class="peer-meta">${meta}</div>
             </div>
             <div class="peer-actions">
+                <form class="chat-search" autocomplete="off">
+                    <input name="q" type="search" placeholder="Search this chat" aria-label="Search this conversation" />
+                </form>
                 ${encryptionButton(chat)}
                 ${chat?.pendingRequest ? html`
                     <span class="muted small">Contact request</span>
@@ -564,6 +590,34 @@ class ChatView {
         `);
 
         this.peer.querySelector<HTMLButtonElement>('.back')?.addEventListener('click', () => this.select(null, true));
+
+        const search = this.peer.querySelector<HTMLInputElement>('.chat-search input');
+
+        if (search !== null)
+        {
+
+            // Typed into rather than submitted: a search box that only answers
+            // on Enter is a search box people think is broken. The wait is what
+            // keeps that from being one request per letter.
+            search.addEventListener('input', () => {
+
+                if (this.searching !== null)
+                    window.clearTimeout(this.searching);
+
+                this.searching = window.setTimeout(() => void this.search(jid, search.value), SEARCH_WAIT_MS);
+
+            });
+
+            // Escape closes the results and leaves the conversation where it
+            // was - the way out that does not need the mouse.
+            search.addEventListener('keydown', event => {
+                if (event.key === 'Escape') {
+                    search.value = '';
+                    this.closeResults();
+                }
+            });
+
+        }
 
         this.peer.querySelector<HTMLButtonElement>('button[data-encryption]')?.
              addEventListener('click', () => void this.encryption(jid, chat?.encryption === 'off'));
@@ -597,6 +651,71 @@ class ChatView {
             this.toast('error', errorMessage(error));
         }
 
+    }
+
+    /**
+     * Search this conversation and show what came back.
+     *
+     * The archive answers it, so this reaches the whole conversation and not
+     * only what is on screen. A result is a line with its date; clicking it
+     * copies nothing and jumps nowhere yet - what it is for is finding out
+     * *when* something was said, and the date is what answers that.
+     */
+    private async search(jid: string, query: string): Promise<void> {
+
+        const needle = query.trim();
+
+        if (needle.length === 0) {
+            this.closeResults();
+            return;
+        }
+
+        try {
+
+            const found = await api.chats.search(jid, needle);
+
+            // The chat may have been changed while the request was in flight.
+            if (this.current !== jid)
+                return;
+
+            this.results.hidden = false;
+
+            if (found.messages.length === 0) {
+                render(this.results, html`<p class="muted small">Nothing in this conversation contains “${needle}”.</p>`);
+                return;
+            }
+
+            render(this.results, html`
+                <div class="results-head">
+                    <span class="muted small">
+                        ${found.messages.length}${found.hasMore ? '+' : ''} in this conversation
+                    </span>
+                    <button type="button" class="btn small" data-close>Close</button>
+                </div>
+                ${found.messages.map(message => html`
+                    <article class="result ${message.direction}">
+                        <div class="result-meta">
+                            ${message.direction === 'out' ? 'you' : jid} · ${formatDay(message.timestamp)} ${formatTime(message.timestamp)}
+                        </div>
+                        <div class="result-body">${message.body}</div>
+                    </article>
+                `)}
+            `);
+
+            this.results.querySelector<HTMLButtonElement>('[data-close]')?.
+                 addEventListener('click', () => this.closeResults());
+
+        }
+        catch (error) {
+            this.results.hidden = false;
+            render(this.results, html`<p class="conn-error small">${errorMessage(error)}</p>`);
+        }
+
+    }
+
+    private closeResults(): void {
+        this.results.hidden = true;
+        render(this.results, html``);
     }
 
     private async contact(jid: string, action: ContactAction): Promise<void> {

@@ -298,6 +298,15 @@ export interface RoomMessages {
     messages:  RoomMessage[];
 }
 
+/** What a search in one conversation found. */
+export interface ChatSearch {
+    seq:       number;
+    query:     string;
+    messages:  Message[];
+    /** true when the archive stopped at the limit and there are older matches */
+    hasMore:   boolean;
+}
+
 /** One stanza as it went over the wire. */
 export interface Stanza {
     seq:        number;
@@ -608,6 +617,15 @@ export const api = {
          */
         sendFile:  (chat: string, file: File)                => sendBytes<{ seq: number; message: Message }>(`/chats/${jid(chat)}/files?name=${encodeURIComponent(file.name)}`, file),
         read:      (chat: string)                            => request<void>                ('POST', `/chats/${jid(chat)}/read`),
+
+        /**
+         * The lines of this conversation containing the text, newest first.
+         *
+         * Answered from the archive, so it reaches the whole conversation and
+         * not only what the page has loaded — and it changes nothing, the
+         * unread count included: searching is not reading.
+         */
+        search:    (chat: string, query: string)             => request<ChatSearch>('GET', `/chats/${jid(chat)}/search?q=${encodeURIComponent(query)}`),
         state:     (chat: string, state: ChatState)          => request<void>                ('POST', `/chats/${jid(chat)}/state`, { state }),
         contact:   (chat: string, action: ContactAction)     => request<void>                ('POST', `/chats/${jid(chat)}/contact`, { action }),
 

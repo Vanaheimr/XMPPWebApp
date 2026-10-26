@@ -213,6 +213,12 @@ that talks to it.
 - **Live.** One Server-Sent Events stream per browser carries every message,
   presence change, typing state and connection change as it happens; the page
   never polls.
+- **Search inside a conversation.** A box in the conversation header; the
+  matches drop in over the composer, newest first, each with its date. Answered
+  from the archive rather than from what the page happens to have loaded — a
+  search that found nothing older than the last restart would be worse than no
+  search — and it changes nothing, the unread count included: searching a
+  conversation is not reading it.
 - **XML debug.** The stanza trace the console has behind `--verbose`, on a page
   at `/debug`: every frame this connection sends and receives, live, with a
   filter. **Off until switched on** — not out of thrift but because a trace is

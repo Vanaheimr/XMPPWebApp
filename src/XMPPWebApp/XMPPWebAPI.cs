@@ -355,6 +355,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/chats",                    ListChats,      HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/chats",                    OpenChat,       HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/messages",     GetMessages,    HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/chats/{jid}/search",       SearchMessages, HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/messages",     SendMessage,    HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/media/{name}", GetMedia,       HTTPMethod.GET);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/files",        SendFile,       HTTPMethod.POST);
@@ -2248,6 +2249,81 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                            new JObject(
                                new JProperty("seq",         Chats.Sequence),
                                new JProperty("encryption",  on ? "auto" : "off")
+                           )
+                       )
+                   );
+
+        }
+
+        #endregion
+
+        #region (private) SearchMessages (Request)
+
+        /// <summary>
+        /// GET /api/v1/chats/{jid}/search?q=... : the lines of this
+        /// conversation that contain the text, newest first.
+        /// </summary>
+        /// <remarks>
+        /// <b>The archive answers this, not the chat store</b> - the store
+        /// holds the recent past, the archive holds the conversation, and a
+        /// search that found nothing older than the last restart would be worse
+        /// than no search.
+        ///
+        /// The store is asked as well and the two are merged, because the
+        /// archive is written through a queue: the line somebody sent ten
+        /// seconds ago may not be on disk yet, and "I just said that" is
+        /// exactly what people search for. Merged by id, because the same line
+        /// is in both.
+        ///
+        /// Changes nothing - not the unread count either. Searching a
+        /// conversation is not reading it.
+        /// </remarks>
+        private Task<HTTPResponse> SearchMessages(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            if (!TryParseChatJID(Request.TryGetURLParameter("jid"), out var jid, out var error))
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, error));
+
+            var needle = (Request.QueryString.GetString("q") ?? "").Trim();
+
+            if (needle.Length == 0)
+                return Task.FromResult(ErrorJSON(Request, HTTPStatusCode.BadRequest, "Nothing to search for."));
+
+            var limit = Math.Clamp(Request.QueryString.GetInt32("limit") ?? ChatArchive.DefaultSearchResults,
+                                   1,
+                                   MaxHistoryPageSize);
+
+            var (archived, hasMore) = Archive?.Search(jid, needle, limit) ?? ([], false);
+
+            // What the store holds and the archive may not have written yet.
+            var live = Chats.TrySnapshot(jid, out _, out _, out var loaded)
+                           ? loaded.Where(message => message.Body.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                           : [];
+
+            var found = live.Concat(archived).
+                             GroupBy  (message => message.Id).
+                             Select   (group   => group.First()).
+                             OrderByDescending(message => message.Timestamp).
+                             Take     (limit).
+                             ToList();
+
+            return Task.FromResult(
+                       JSONResponse(
+                           Request,
+                           HTTPStatusCode.OK,
+                           new JObject(
+                               new JProperty("seq",       Chats.Sequence),
+                               new JProperty("query",     needle),
+                               new JProperty("messages",  new JArray(found.Select(message => message.ToJSON()))),
+
+                               // True when the archive stopped early. A live
+                               // match that pushed an archived one off the end
+                               // does not count as "more": nothing was left
+                               // unread, it was only ordered differently.
+                               new JProperty("hasMore",   hasMore)
                            )
                        )
                    );

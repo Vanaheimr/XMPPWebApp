@@ -1269,3 +1269,61 @@ input, textarea, select {
     }
 
 }
+
+
+// Search inside one conversation. The box sits in the conversation header and
+// the results drop in over the composer, so that the conversation stays where
+// it was: a search is a question about a chat, not a way of leaving it.
+.chat-search input {
+    width:          10rem;
+    max-width:      34vw;
+    padding:        0.25rem 0.5rem;
+    border:         1px solid $color-border;
+    border-radius:  4px;
+    font-size:      0.8rem;
+}
+
+.results {
+
+    max-height:   45%;
+    overflow-y:   auto;
+    border-top:   1px solid $color-border;
+    background:   $color-surface;
+    padding:      0.5rem 1rem;
+
+    .results-head {
+        display:          flex;
+        align-items:      center;
+        justify-content:  space-between;
+        margin-bottom:    0.4rem;
+    }
+
+    .result {
+
+        padding:        0.3rem 0.4rem;
+        border-radius:  4px;
+        border-left:    3px solid $color-border;
+
+        + .result { margin-top: 0.3rem; }
+
+        &.out { border-left-color: $color-muted; }
+
+        .result-meta {
+            font-size:  0.7rem;
+            color:      $color-muted;
+        }
+
+        // A long line is a preview here, not the message: the conversation
+        // above is where it is read.
+        .result-body {
+            font-size:      0.85rem;
+            overflow:       hidden;
+            display:        -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+            line-clamp:     3;
+        }
+
+    }
+
+}

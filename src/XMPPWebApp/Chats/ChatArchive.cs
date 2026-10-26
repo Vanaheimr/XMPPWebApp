@@ -86,6 +86,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         public const           Int32     DefaultPageSize       = 100;
 
         /// <summary>
+        /// How many matches a search answers with before it says there are
+        /// more.
+        /// </summary>
+        /// <remarks>
+        /// A page of results rather than all of them: the point of searching a
+        /// long conversation is to find one line, and a common word would
+        /// otherwise read every month file there is.
+        /// </remarks>
+        public const           Int32     DefaultSearchResults  = 100;
+
+        /// <summary>
         /// How many files are fetched at the same time.
         /// </summary>
         /// <remarks>
@@ -493,6 +504,71 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             }
 
             return false;
+
+        }
+
+        #endregion
+
+        #region Search(Peer, Needle, Limit = DefaultSearchResults)
+
+        /// <summary>
+        /// The lines of one conversation whose text contains
+        /// <paramref name="Needle"/>, newest first, and whether there were more
+        /// than <paramref name="Limit"/> of them.
+        /// </summary>
+        /// <remarks>
+        /// <b>Through the archive and not through the chat store</b>, because
+        /// the store holds the recent past and the archive holds the
+        /// conversation. A search that only looked at what happens to be loaded
+        /// would answer "not found" for everything said before the program last
+        /// started, which is the opposite of what somebody searching wants.
+        ///
+        /// Backwards through the months and backwards within each, so that the
+        /// first <paramref name="Limit"/> matches are the most recent ones -
+        /// and so that a common word in a long conversation stops after a page
+        /// instead of reading years of files.
+        ///
+        /// Case-insensitive and ordinal: predictable, and it folds the umlauts
+        /// a German conversation is full of. What it does not do is match "ss"
+        /// against "ß" or ignore accents - a search box that quietly matched
+        /// more than it was asked is worse than one that matches exactly what
+        /// was typed.
+        /// </remarks>
+        public (IReadOnlyList<ChatMessage> Messages, Boolean HasMore) Search(JID     Peer,
+                                                                             String  Needle,
+                                                                             Int32   Limit   = DefaultSearchResults)
+        {
+
+            // An empty needle matches every line, which is not a search but a
+            // way to ask for the whole archive at once.
+            if (String.IsNullOrWhiteSpace(Needle) || Limit < 1)
+                return ([], false);
+
+            var found = new List<ChatMessage>();
+
+            foreach (var file in MonthFiles(Peer))
+            {
+
+                var month = Read(file.Path, Peer);
+
+                for (var i = month.Count - 1; i >= 0; i--)
+                {
+
+                    if (!month[i].Body.Contains(Needle, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    found.Add(month[i]);
+
+                    // One past the limit is how "there are more" is known
+                    // without counting them all.
+                    if (found.Count > Limit)
+                        return (found[..Limit], true);
+
+                }
+
+            }
+
+            return (found, false);
 
         }
 
