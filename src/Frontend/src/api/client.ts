@@ -298,6 +298,23 @@ export interface RoomMessages {
     messages:  RoomMessage[];
 }
 
+/** One stanza as it went over the wire. */
+export interface Stanza {
+    seq:        number;
+    timestamp:  string;
+    direction:  'in' | 'out';
+    xml:        string;
+}
+
+/** The debug trace: whether it is recording, and what it has. */
+export interface StanzaTrace {
+    enabled:   boolean;
+    /** how many stanzas are kept before the oldest one goes */
+    capacity:  number;
+    seq:       number;
+    stanzas:   Stanza[];
+}
+
 /** The XMPP connection of the web app. */
 export interface Connection {
     state:             ConnectionState;
@@ -631,6 +648,20 @@ export const api = {
          * calling it.
          */
         openUp:    (room: string)                    => request<{ seq: number; room: Room }>('POST', `/rooms/${jid(room)}/encryption`)
+    },
+
+    /**
+     * XML debug: what went over the wire.
+     *
+     * Off until switched on, and switching it off throws away what was kept —
+     * a trace that is "off" and still holds the last conversation is the
+     * opposite of what switching it off is for. The SASL exchange is emptied
+     * out before anything is stored, so this never shows a credential.
+     */
+    debug: {
+        stanzas:  ()                  => request<StanzaTrace>('GET',  '/debug/stanzas'),
+        record:   (enabled: boolean)  => request<StanzaTrace>('POST', '/debug/stanzas', { enabled }),
+        clear:    ()                  => request<StanzaTrace>('POST', '/debug/stanzas', { clear: true })
     }
 
 };

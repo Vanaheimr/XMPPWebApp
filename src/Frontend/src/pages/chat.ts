@@ -48,6 +48,9 @@ export const chatPage: Page = {
                         <a href="/account" class="btn small" title="XMPP account settings">
                             <i class="fa-solid fa-gear"></i>
                         </a>
+                        <a href="/debug" class="btn small" title="XML debug: what goes over the wire">
+                            <i class="fa-solid fa-code"></i>
+                        </a>
                         <button type="button" id="sign-out" class="btn small" title="Sign out of the web page">
                             <i class="fa-solid fa-right-from-bracket"></i>
                         </button>

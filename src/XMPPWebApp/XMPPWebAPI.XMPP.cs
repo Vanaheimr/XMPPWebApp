@@ -448,6 +448,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             client.OnMessage             += (timestamp, sender, message,      ct) => { if (Mine(sender)) HandleMessage    (message);      return Task.CompletedTask; };
             client.OnEncryptedMessage    += (timestamp, sender, message, omemo, ct) => { if (Mine(sender)) HandleEncrypted(message, omemo); return Task.CompletedTask; };
+            client.OnRawXml              += (timestamp, sender, xml,      ct) => { if (Mine(sender)) HandleRawXml(xml);            return Task.CompletedTask; };
             client.OnOmemoIdentityChanged += (timestamp, sender, change,   ct) => { if (Mine(sender)) HandleIdentityChanged(change);   return Task.CompletedTask; };
             client.OnCarbonMessage       += (timestamp, sender, carbon,       ct) => { if (Mine(sender)) HandleCarbon     (carbon);       return Task.CompletedTask; };
             client.OnChatState           += (timestamp, sender, from, state,  ct) => { if (Mine(sender)) HandleChatState  (from, state);  return Task.CompletedTask; };
@@ -1159,6 +1160,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             => Path.Combine(OmemoDirectory ?? PrivatePaths.Directory(),
                             ChatArchivePaths.SafeName(BareJID.Bare.ToString()) + ".json");
+
+        #endregion
+
+        #region (private) HandleRawXml    (Raw)
+
+        /// <summary>
+        /// One frame off the wire, for the debug view.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is on the receive loop</b>, so it does what the other
+        /// handlers do and nothing more: the trace takes a lock for the length
+        /// of an enqueue and answers null when it is switched off, and
+        /// publishing is the same fire-and-forget as everywhere else. When
+        /// nobody has switched the trace on - which is almost always - this
+        /// costs one volatile read per stanza.
+        /// </remarks>
+        private void HandleRawXml(String Raw)
+        {
+
+            if (Trace.Record(Raw) is TracedStanza stanza)
+                Publish("stanza", Chats.Sequence, new JObject(new JProperty("stanza", stanza.ToJSON())));
+
+        }
 
         #endregion
 

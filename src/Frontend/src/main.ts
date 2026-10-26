@@ -15,6 +15,7 @@ import { Router } from './router';
 
 import { accountPage }  from './pages/account';
 import { chatPage }     from './pages/chat';
+import { debugPage }    from './pages/debug';
 import { loginPage }    from './pages/login';
 import { notFoundPage } from './pages/notFound';
 import { roomsPage }    from './pages/rooms';
@@ -42,6 +43,7 @@ const router = new Router({
         { path: '/rooms/:jid',  page: roomsPage,    guard: auth.requireSignIn },
 
         { path: '/account',     page: accountPage,  guard: auth.requireSignIn },
+        { path: '/debug',       page: debugPage,    guard: auth.requireSignIn },
         { path: '/login',       page: loginPage }
     ],
     outlet:       must<HTMLElement>(root, '#page'),

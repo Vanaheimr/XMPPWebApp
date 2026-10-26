@@ -1,5 +1,5 @@
 import { api, type Chat, type ChatState, type Connection, type ContactAction, type Message,
-         type Room, type RoomMessage } from '../api/client';
+         type Room, type RoomMessage, type Stanza } from '../api/client';
 
 // The browser's copy of the conversations, fed by two things: snapshots from
 // the JSON API and the Server-Sent Events stream. Both carry sequence numbers
@@ -21,6 +21,7 @@ export type StoreEvent =
     | { type: 'roomMessage';  jid: string; message: RoomMessage }
     | { type: 'connection' }
     | { type: 'notice';   level: 'info' | 'warning' | 'error'; text: string }
+    | { type: 'stanza' }
     | { type: 'stream' };
 
 type Listener = (event: StoreEvent) => void;
@@ -31,12 +32,16 @@ interface RoomData        { seq: number; room: Room }
 interface RoomMessageData { seq: number; message: RoomMessage }
 interface ConnectionData  { seq: number; previous: string; connection: Connection }
 interface NoticeData      { seq: number; level: string; text: string; timestamp: string }
+interface StanzaData      { seq: number; stanza: Stanza }
 
 type Recent =
     | { kind: 'chat';    seq: number; jid: string; chat: Chat }
     | { kind: 'message'; seq: number; jid: string; message: Message };
 
 const RECENT_LIMIT = 500;
+
+/** As many as the server keeps - see StanzaTrace.DefaultCapacity. */
+const STANZA_LIMIT = 500;
 
 
 export class ChatStore {
@@ -56,6 +61,9 @@ export class ChatStore {
      */
     readonly rooms         = new Map<string, Room>();
     readonly roomMessages  = new Map<string, RoomMessage[]>();
+
+    /** XML debug: the stanzas this page has seen, oldest first. */
+    stanzas: Stanza[] = [];
 
     /** Per chat: whether the archive holds anything older than what is loaded. */
     private readonly more = new Map<string, boolean>();
@@ -142,6 +150,7 @@ export class ChatStore {
         source.addEventListener('roomMessage', event => this.onRoomMessage(parse<RoomMessageData> (event)));
         source.addEventListener('connection',  event => this.onConnection (parse<ConnectionData>  (event)));
         source.addEventListener('notice',      event => this.onNotice     (parse<NoticeData>      (event)));
+        source.addEventListener('stanza',      event => this.onStanza     (parse<StanzaData>      (event)));
 
     }
 
@@ -612,6 +621,24 @@ export class ChatStore {
     private onConnection(event: ConnectionData): void {
         this.connection = event.connection;
         this.emit({ type: 'connection' });
+    }
+
+    /**
+     * XML debug: one frame off the wire.
+     *
+     * Kept here because there is one event stream and the store owns it, and
+     * bounded here because the server bounds its own copy — a page left open
+     * on a live connection would otherwise collect a keepalive every half
+     * minute until the tab runs out of memory.
+     *
+     * The list is replaced rather than pushed into, so that a render can hold
+     * on to the array it was given without it changing underneath.
+     */
+    private onStanza(event: StanzaData): void {
+
+        this.stanzas = [...this.stanzas, event.stanza].slice(-STANZA_LIMIT);
+        this.emit({ type: 'stanza' });
+
     }
 
     private onNotice(event: NoticeData): void {

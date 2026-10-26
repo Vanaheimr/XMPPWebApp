@@ -213,6 +213,14 @@ that talks to it.
 - **Live.** One Server-Sent Events stream per browser carries every message,
   presence change, typing state and connection change as it happens; the page
   never polls.
+- **XML debug.** The stanza trace the console has behind `--verbose`, on a page
+  at `/debug`: every frame this connection sends and receives, live, with a
+  filter. **Off until switched on** — not out of thrift but because a trace is
+  every word of every conversation, the whole roster and who is online; and
+  switching it off throws away what was kept. The SASL exchange is emptied out
+  before anything is stored, so no credential reaches the page even on a
+  connection that negotiated PLAIN. The mechanism names survive, because
+  “why did it choose PLAIN” is what somebody opens this for.
 
 Not implemented: MIX (XEP-0369), Jingle, blocking (XEP-0191), in-band
 registration of an account, and sending a private word inside a room — this app
@@ -791,6 +799,7 @@ src/XMPPWebApp/                  the C# process (net10.0)
     Chats/ChatArchive.cs         the conversations on disk: writing, and reading back
     Chats/ChatArchivePaths.cs    where a conversation goes, and what a JID may become
     Chats/PlaintextChats.cs      the conversations encryption is turned off for
+    StanzaTrace.cs               what went over the wire, and what of it may be shown
     Chats/MediaLinks.cs          which link in a body is a shared file
     Chats/MediaStore.cs          fetching one, and refusing most others
     XmlText.cs                   what XML 1.0 will not carry
@@ -803,6 +812,7 @@ src/Frontend/                    npm project (webpack, TypeScript, SCSS)
     src/pages/chat.ts            the chat page
     src/pages/account.ts         the settings page: the XMPP account, the login, the passkeys
     src/pages/login.ts           the sign-in page
+    src/pages/debug.ts           the XML debug view
     src/chat/store.ts            the browser's copy of the chats, fed by the stream
     src/chat/links.ts            which body is a picture, which is a link, and the archived file
     src/api/client.ts            the JSON API

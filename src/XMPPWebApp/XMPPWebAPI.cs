@@ -139,6 +139,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         public PlaintextChats?           PlaintextChats { get; }
 
         /// <summary>
+        /// What went over the wire, while somebody is looking.
+        /// </summary>
+        public StanzaTrace               Trace          { get; } = new ();
+
+        /// <summary>
         /// XEP-0045: the rooms this app is in.
         /// </summary>
         /// <remarks>
@@ -355,6 +360,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/files",        SendFile,       HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/read",         MarkRead,       HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/encryption",   SetEncryption,  HTTPMethod.POST);
+
+            AddHandler(HTTPPath.Root + "v1/debug/stanzas",            GetStanzas,     HTTPMethod.GET);
+            AddHandler(HTTPPath.Root + "v1/debug/stanzas",            SetStanzas,     HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/state",        SendChatState,  HTTPMethod.POST);
             AddHandler(HTTPPath.Root + "v1/chats/{jid}/contact",      Contact,        HTTPMethod.POST);
 
@@ -2242,6 +2250,93 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                new JProperty("encryption",  on ? "auto" : "off")
                            )
                        )
+                   );
+
+        }
+
+        #endregion
+
+        #region (private) GetStanzas     (Request) / SetStanzas(Request)
+
+        /// <summary>
+        /// GET /api/v1/debug/stanzas: what went over the wire, and whether
+        /// anything is being recorded at all.
+        /// </summary>
+        /// <remarks>
+        /// Behind the session like everything else here, and that is the whole
+        /// of the protection it needs to have: whoever is signed in can read
+        /// every conversation on the chat page anyway. What it must not do is
+        /// show more than that, which is why the SASL exchange is emptied out
+        /// before anything is kept - see <see cref="StanzaTrace.Redact"/>.
+        /// </remarks>
+        private Task<HTTPResponse> GetStanzas(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            return Task.FromResult(
+                       JSONResponse(
+                           Request,
+                           HTTPStatusCode.OK,
+                           StanzasJSON()
+                       )
+                   );
+
+        }
+
+        /// <summary>
+        /// POST /api/v1/debug/stanzas with {"enabled"} and optionally
+        /// {"clear"}: switches the recording on or off, and throws away what
+        /// was recorded.
+        /// </summary>
+        /// <remarks>
+        /// Switching off clears by itself - a trace that is "off" and still
+        /// holds the last conversation is the opposite of what switching it off
+        /// is for. <c>clear</c> is for emptying it while it keeps running,
+        /// which is what somebody does right before reproducing the thing they
+        /// are chasing.
+        /// </remarks>
+        private Task<HTTPResponse> SetStanzas(HTTPRequest Request)
+        {
+
+            if (!TryGetSession(Request, out _, out var unauthorized))
+                return Task.FromResult(unauthorized);
+
+            if (RefuseCrossSite(Request) is HTTPResponse refused)
+                return Task.FromResult(refused);
+
+            if (!TryParseJSONObject(Request, out var json, out var errorResponse))
+                return Task.FromResult(errorResponse);
+
+            if (json.Value<Boolean?>("enabled") is Boolean enabled)
+                Trace.Enabled = enabled;
+
+            if (json.Value<Boolean?>("clear") == true)
+                Trace.Clear();
+
+            logger.LogInformation("The stanza trace is now {State}", Trace.Enabled ? "on" : "off");
+
+            return Task.FromResult(
+                       JSONResponse(
+                           Request,
+                           HTTPStatusCode.OK,
+                           StanzasJSON()
+                       )
+                   );
+
+        }
+
+        private JObject StanzasJSON()
+        {
+
+            var kept = Trace.Snapshot();
+
+            return new JObject(
+                       new JProperty("enabled",   Trace.Enabled),
+                       new JProperty("capacity",  Trace.Capacity),
+                       new JProperty("seq",       Trace.Sequence),
+                       new JProperty("stanzas",   new JArray(kept.Select(stanza => stanza.ToJSON())))
                    );
 
         }
