@@ -190,6 +190,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 { ".weba",  "audio/webm"  }
             };
 
+        /// <summary>
+        /// Every extension a name may end in and still be worth asking for.
+        /// </summary>
+        /// <remarks>
+        /// Declared after both tables on purpose: a static initialiser reads
+        /// what is above it, and this one reads both.
+        /// </remarks>
+        private static readonly IReadOnlySet<String> keptExtensions =
+            new HashSet<String>(AllowedTypes.Values.
+                                    Concat(typesByExtension.Keys).
+
+                                    // ".ogg" is in neither and belongs here:
+                                    // absent from typesByExtension because it
+                                    // does not say whether it is audio or
+                                    // video, and absent from AllowedTypes
+                                    // because what this program stores it as is
+                                    // ".oga" or ".ogv". Both of those kinds are
+                                    // kept, and a voice message really arrives
+                                    // under this name.
+                                    Append(".ogg"),
+
+                                StringComparer.OrdinalIgnoreCase);
+
         private readonly HttpClient                 httpClient;
         private readonly Lock                       @lock   = new();
 
@@ -265,6 +288,44 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+
+        #region KeepsFilesNamed(FileName)
+
+        /// <summary>
+        /// Could a file of this name be a kind this archive keeps?
+        /// </summary>
+        /// <remarks>
+        /// <b>A third question, and deliberately not either of the two the
+        /// tables above answer.</b> <see cref="AllowedTypes"/> says what may be
+        /// kept, keyed by what a server answers;
+        /// <see cref="typesByExtension"/> says what a kept file may be served
+        /// as. This one is asked before anything has been asked of anybody:
+        /// whether a shared address is worth a request at all.
+        ///
+        /// So it goes by the union of the two, which is wider than either.
+        /// ".jpeg" and ".m4v" are names people's files really carry, although
+        /// this program would store the same content as ".jpg" and ".mp4"; and
+        /// ".pdf" counts here although it is absent there, because a PDF is
+        /// kept and only never served as one.
+        ///
+        /// <b>Generous on purpose.</b> What the server answers is checked
+        /// against <see cref="AllowedTypes"/> in every case afterwards, so a
+        /// name that promises too much costs one request and nothing else.
+        /// Being strict here would instead lose files that were genuinely
+        /// handed over - and losing those is not a privacy gain, it is a broken
+        /// chat client.
+        /// </remarks>
+        public static Boolean KeepsFilesNamed(String FileName)
+        {
+
+            var dot = FileName.LastIndexOf('.');
+
+            return dot >= 0 &&
+                   keptExtensions.Contains(FileName[dot..]);
+
+        }
+
+        #endregion
 
         #region FetchAsync(Account, Peer, URL, ReceivedAt, CancellationToken = default)
 

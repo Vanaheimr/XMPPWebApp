@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2010-2026 GraphDefined GmbH <achim.friedland@graphdefined.com>
  * This file is part of XMPPWebApp <https://www.github.com/Vanaheimr/XMPPWebApp>
  *
@@ -31,10 +31,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// link.
     /// </summary>
     /// <remarks>
-    /// XMPP has an element for this - <c>&lt;x xmlns='jabber:x:oob'&gt;</c>,
-    /// XEP-0066 - and Ratatoskr does not read it. So the body is all there is,
-    /// and the body does not say what it means. Two rules, and the reason for
-    /// each:
+    /// The body is all there is to go by, and the body does not say what it
+    /// means. Three rules, and the reason for each:
     ///
     /// <b>aesgcm:// always.</b> That scheme exists for nothing but a shared
     /// file (XEP-0454): the URL carries the key to decrypt it. Nobody writes
@@ -45,13 +43,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// how a client sends an upload per XEP-0363 - the body repeats the URL
     /// precisely because the receiver may not read the OOB element. A link
     /// inside a sentence is a different act: somebody is pointing at something,
-    /// not handing it over. Fetching those would turn every news article
-    /// anybody mentions into a download, and would let whoever may write to us
-    /// decide what this machine fetches.
+    /// not handing it over.
     ///
-    /// It is the same rule the browser side applies in chat/links.ts when it
-    /// decides whether a body is a picture, and deliberately so: what is shown
-    /// inline and what is kept are the same thing.
+    /// <b>And only when the address names a kind of file this archive keeps</b>
+    /// - the extension, out of <see cref="MediaStore.KeepsFilesNamed"/>.
+    /// Without this one the two rules above read a pasted link as a handed-over
+    /// file whenever it stands alone in its line, which is how people paste
+    /// links: a bare <c>https://www.youtube.com/shorts/...</c> was fetched in
+    /// full, found to be <c>text/html</c>, and thrown away again. The throwing
+    /// away was never the point. <b>The request itself is what tells a stranger
+    /// that the message arrived, and from which address</b> - before the reader
+    /// has so much as looked at it.
+    ///
+    /// The extension is a claim of the sender's, not proof, and it is not
+    /// treated as proof: what the server answers is still checked against the
+    /// same table, and a <c>.png</c> that arrives as <c>text/html</c> is
+    /// refused as before. The claim decides one thing only - whether this side
+    /// asks at all.
+    ///
+    /// It is the rule the browser side has applied all along in chat/links.ts
+    /// when it decides whether a body is a picture; that this side was looser
+    /// is what this comment used to describe as the same rule. The browser
+    /// keeps to pictures, because that is what it shows inline; here video,
+    /// audio and PDF count too, because those are kept.
     ///
     /// At most one file per message is taken, the first. A body is one URL or
     /// it is not; a body with several is a sentence.
@@ -73,6 +87,30 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+
+        #region (private static) NamesAKeptFile(Url)
+
+        /// <summary>
+        /// Does the address name a kind of file this archive keeps?
+        /// </summary>
+        /// <remarks>
+        /// The last segment of the path and nothing else: a query string is no
+        /// part of the name - <c>?token=...</c> hangs on every upload URL that
+        /// expires - and the host says nothing about what lies there.
+        /// </remarks>
+        private static Boolean NamesAKeptFile(Uri Url)
+        {
+
+            var path     = Url.AbsolutePath;
+            var slash    = path.LastIndexOf('/');
+            var fileName = slash >= 0 ? path[(slash + 1)..] : path;
+
+            return fileName.Length > 0 &&
+                   MediaStore.KeepsFilesNamed(fileName);
+
+        }
+
+        #endregion
 
         #region Detect(Body)
 
@@ -128,8 +166,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 // Plain http is not fetched. The file would travel readable,
                 // and a shared file is nothing this side wants to make more
                 // public than the sender did.
-                if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
+                if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) &&
+                    NamesAKeptFile(uri))
+                {
                     return uri;
+                }
 
             }
 
