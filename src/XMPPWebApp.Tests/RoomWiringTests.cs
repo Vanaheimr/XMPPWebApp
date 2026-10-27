@@ -426,6 +426,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await JoinAsync(NonAnonymous: true);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api!.Client!.OmemoAnnounced, "the web app to announce its OMEMO device");
 
             // The occupant list reached the store when the room was entered;
@@ -1160,6 +1162,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             var session = await JoinAsync(NonAnonymous: true);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api!.Client!.OmemoAnnounced,          "the web app to announce its OMEMO device");
             await Until(() => TheRoom()!.CannotEncrypt is null,     "the room to become one that can be encrypted in");
 

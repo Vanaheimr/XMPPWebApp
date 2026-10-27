@@ -239,6 +239,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true,
                         "the web app to announce its OMEMO device");
 

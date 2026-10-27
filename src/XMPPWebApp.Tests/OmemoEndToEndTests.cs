@@ -183,6 +183,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true,
                         "the web app to announce its OMEMO device");
 
@@ -266,6 +268,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true,
                         "the web app to announce its OMEMO device");
 
@@ -318,6 +322,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true, "the first start to announce its device");
 
             var first  = api.Client!.Omemo!.Fingerprint;
@@ -341,6 +347,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await second.LoadDatabase();
                 await second.ApplyAccountAsync(Account("me"), Save: false);
 
+                // Announced and not merely switched on: OMEMO is on three round
+                // trips before this device stands in the account's own list.
                 await Until(() => second.Client?.OmemoAnnounced == true, "the second start to announce its device");
 
                 Assert.Multiple(() =>
@@ -415,6 +423,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 // And only now does this side start, on that store.
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
 
+                // Announced and not merely switched on: OMEMO is on three round
+                // trips before this device stands in the account's own list -
+                // and of all the tests here this is the one that notices. Alice
+                // is connected and encrypting already, and what she encrypts to
+                // is whatever that list says when she sends, two lines down. On
+                // "is it on" she reads it before anything stands in it, so
+                // there is nothing to encrypt to, nothing arrives, and the
+                // notice this test waits for never comes - a delay of a second
+                // and a half between the fetch and the publication is enough to
+                // see it happen.
                 await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 await alice.SendEncryptedMessageAsync(JID.Parse($"me@{xmpp.Domain}"), "Shall we meet at eight?");
@@ -524,6 +542,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await alice.EnableOmemoAsync();
 
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+                // Announced and not merely switched on: OMEMO is on three round
+                // trips before this device stands in the account's own list.
                 await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 XMPPMessage? atAlice = null;
@@ -845,6 +866,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await alice.ConnectAsync();
 
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+                // Announced and not merely switched on: OMEMO is on three round
+                // trips before this device stands in the account's own list.
                 await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 XMPPMessage? atAlice = null;
@@ -910,6 +934,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                                  "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var peer = JID.Parse($"alice@{xmpp.Domain}");
@@ -978,6 +1005,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                                  "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var peer = JID.Parse($"alice@{xmpp.Domain}");
@@ -1038,6 +1068,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             // Alice has published nothing at all, which her server says plainly.
             await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var peer = JID.Parse($"alice@{xmpp!.Domain}");
@@ -1200,6 +1233,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await alice.EnableOmemoAsync();
 
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+                // Announced and not merely switched on: OMEMO is on three round
+                // trips before this device stands in the account's own list.
                 await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 var peer = JID.Parse($"alice@{xmpp!.Domain}");
@@ -1291,6 +1327,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
             await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var directory = Path.Combine(root, "omemo");
