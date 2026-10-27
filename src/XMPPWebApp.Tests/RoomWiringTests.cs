@@ -1247,10 +1247,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             Assert.That(second.StatusCode, Is.EqualTo(HttpStatusCode.OK), await second.Content.ReadAsStringAsync());
 
-            await Until(() => session.CountReceived("urn:xmpp:message-correct:0") >= 2, "both corrections on the wire");
+            // The element and not the namespace alone: a client that is asked
+            // what it understands answers with its whole feature list, and this
+            // namespace stands in it. Counted by the namespace, that answer
+            // reads as a correction - and is then parsed for a <replace/> it
+            // has no reason to carry.
+            Boolean IsACorrection(String frame)
+                => frame.Contains("<replace", StringComparison.Ordinal) &&
+                   frame.Contains("urn:xmpp:message-correct:0", StringComparison.Ordinal);
+
+            await Until(() => session.Received.Count(IsACorrection) >= 2, "both corrections on the wire");
 
             var named    = session.Received
-                                  .Where (frame => frame.Contains("urn:xmpp:message-correct:0", StringComparison.Ordinal))
+                                  .Where (IsACorrection)
                                   .Select(frame => XElement.Parse(frame).Elements()
                                                            .First(element => element.Name.LocalName == "replace")
                                                            .Attribute("id")?.Value)
