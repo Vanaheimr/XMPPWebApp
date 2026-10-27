@@ -841,7 +841,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 return;
             }
 
-            if (MediaLinks.Detect(Message.Body) is not Uri url)
+            if (MediaLinks.Detect(Message.Body, Message.Declared) is not Uri url)
                 return;
 
             lock (@lock)

@@ -863,6 +863,62 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ADeclaredFile_IsFetchedWhateverItIsCalled()
+
+        /// <summary>
+        /// XEP-0066: the declaration reaches the decision the archive makes,
+        /// and decides it.
+        /// </summary>
+        /// <remarks>
+        /// <b>What this measures is the way from the stanza to the request</b>,
+        /// which is three handovers long - the store puts the declaration on
+        /// the line, the line goes through the queue, and the write loop asks
+        /// MediaLinks about it. MediaLinksTests holds the rule itself; a rule
+        /// held in a unit test and dropped on the way to its one caller is
+        /// worth nothing, and the dropping is the easy mistake here, because
+        /// the declaration is carried by a line that is written without it.
+        ///
+        /// The address is a loopback one, which the media store refuses before
+        /// it opens a socket, so nothing reaches the network. What is counted
+        /// is the archive deciding to fetch: the set of messages it remembers
+        /// having fetched for, which it writes before the attempt and not after
+        /// it.
+        /// </remarks>
+        [Test]
+        public async Task ADeclaredFile_IsFetchedWhateverItIsCalled()
+        {
+
+            const String nameless = "https://127.0.0.1/a1b2/8f3c91d7e4";
+
+            await using var declared  = Open(KeepMedia: true);
+            await using var guessed   = Open(KeepMedia: true);
+
+            declared.Record(Incoming(alice, "m1", nameless, september) with {
+                                Declared = new Uri(nameless)
+                            });
+
+            guessed. Record(Incoming(alice, "m1", nameless, september));
+
+            await declared.FlushAsync(TimeSpan.FromSeconds(30));
+            await guessed. FlushAsync(TimeSpan.FromSeconds(30));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(declared.RememberedFetches, Is.EqualTo(1),
+                            "the declaration did not reach the archive: a file the sender said " +
+                            "was one was left where it lay");
+
+                Assert.That(guessed.RememberedFetches,  Is.EqualTo(0),
+                            "the same line without a declaration was fetched, so this test says " +
+                            "nothing about the declaration");
+
+            });
+
+        }
+
+        #endregion
+
         #region WhatAPeerCanGrow_StaysBounded()
 
         /// <summary>

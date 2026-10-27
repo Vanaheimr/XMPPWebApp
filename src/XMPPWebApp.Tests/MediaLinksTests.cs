@@ -38,8 +38,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
     /// undone by throwing the answer away: it has already told the host that
     /// the message arrived, and from which address.
     ///
-    /// Nothing here reaches the network. Detect is a pure function of the body,
-    /// which is what makes it worth testing this closely.
+    /// There are two signals and they are not equal. XEP-0066 is the sender
+    /// saying "this message is about a file", which a client writes when it
+    /// shares one and a person pasting a link never does; the extension in the
+    /// address is what is left to go by when nobody said. The tests below hold
+    /// both, and hold that neither overrides what the body says.
+    ///
+    /// Nothing here reaches the network. Detect is a pure function of the body
+    /// and the declaration, which is what makes it worth testing this closely.
     /// </remarks>
     [TestFixture]
     public class MediaLinksTests
@@ -201,6 +207,115 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             Assert.That(MediaLinks.Detect("http://upload.example.org/a1b2/IMG_1234.jpg"),
                         Is.Null,
                         "plain http is not fetched");
+
+        }
+
+        #endregion
+
+
+        #region ADeclaredFile_IsFetchedWhateverItIsCalled()
+
+        /// <summary>
+        /// XEP-0066: a file the sender declared is a file, even when its
+        /// address names nothing.
+        /// </summary>
+        /// <remarks>
+        /// <b>The one case the extension cannot decide.</b> An upload service
+        /// is free to hand back an address that is an identifier and nothing
+        /// else - XEP-0363 asks it to put the file somewhere and say where,
+        /// not to keep the name. Conversations, Dino and Gajim all upload to
+        /// services that keep it, which is why the extension carries as far as
+        /// it does; a service that does not would have left every file it
+        /// serves unfetched.
+        ///
+        /// The second half of this test is what makes the first half about
+        /// anything: the same body without the declaration is not fetched, so
+        /// what is being measured is the declaration and not the address.
+        /// </remarks>
+        [Test]
+        public void ADeclaredFile_IsFetchedWhateverItIsCalled()
+        {
+
+            const String nameless = "https://upload.example.org/a1b2/8f3c91d7e4";
+
+            Assert.Multiple(() => {
+
+                Assert.That(MediaLinks.Detect(nameless, new Uri(nameless))?.AbsoluteUri,
+                            Is.EqualTo(nameless),
+                            "the sender said this is a file, which is better than this side guessing");
+
+                Assert.That(MediaLinks.Detect(nameless),
+                            Is.Null,
+                            "and without the declaration the same address is just an address");
+
+            });
+
+        }
+
+        #endregion
+
+        #region ADeclarationDoesNotOverrideTheBody()
+
+        /// <summary>
+        /// The declaration decides whether an address is a file, and nothing
+        /// else about it.
+        /// </summary>
+        /// <remarks>
+        /// <b>Checked here although Ratatoskr checks it too.</b> The library
+        /// hands over the declaration only when it names what the body names,
+        /// because a message that shows one address and leads to another is the
+        /// oldest trick there is. This side asks again, because this side is
+        /// where the consequence lies: the request that leaves this machine
+        /// goes to the address in it. Two checks of one rule, in the two places
+        /// that each need it.
+        ///
+        /// A sentence stays a sentence too. XEP-0363, section 5 has the body be
+        /// the address, so a declaration beside a sentence is not something the
+        /// library would pass on either - and a rule that holds in one place
+        /// only is a rule that stops holding when the other place changes.
+        /// </remarks>
+        [Test]
+        public void ADeclarationDoesNotOverrideTheBody()
+        {
+
+            Assert.Multiple(() => {
+
+                Assert.That(MediaLinks.Detect("https://upload.example.org/a1b2/8f3c91d7e4",
+                                              new Uri("https://elsewhere.example/payload")),
+                            Is.Null,
+                            "a declaration pointing somewhere other than the body was followed");
+
+                Assert.That(MediaLinks.Detect("have a look at https://upload.example.org/a1b2/8f3c91d7e4",
+                                              new Uri("https://upload.example.org/a1b2/8f3c91d7e4")),
+                            Is.Null,
+                            "a declaration made a link inside a sentence into a handed-over file");
+
+            });
+
+        }
+
+        #endregion
+
+        #region ADeclaredPlainHttpUrl_IsStillNotFetched()
+
+        /// <summary>
+        /// The https rule is not the sender's to waive.
+        /// </summary>
+        /// <remarks>
+        /// It is not a question about what the message means - which is all the
+        /// declaration can answer - but about what this side is willing to do:
+        /// fetch a file over a connection anybody on the way can read, and then
+        /// keep it beside a conversation as though it had arrived privately.
+        /// </remarks>
+        [Test]
+        public void ADeclaredPlainHttpUrl_IsStillNotFetched()
+        {
+
+            const String insecure = "http://upload.example.org/a1b2/IMG_1234.jpg";
+
+            Assert.That(MediaLinks.Detect(insecure, new Uri(insecure)),
+                        Is.Null,
+                        "a declared file was fetched over plain http");
 
         }
 

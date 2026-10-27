@@ -45,27 +45,43 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// inside a sentence is a different act: somebody is pointing at something,
     /// not handing it over.
     ///
-    /// <b>And only when the address names a kind of file this archive keeps</b>
-    /// - the extension, out of <see cref="MediaStore.KeepsFilesNamed"/>.
-    /// Without this one the two rules above read a pasted link as a handed-over
-    /// file whenever it stands alone in its line, which is how people paste
-    /// links: a bare <c>https://www.youtube.com/shorts/...</c> was fetched in
-    /// full, found to be <c>text/html</c>, and thrown away again. The throwing
-    /// away was never the point. <b>The request itself is what tells a stranger
-    /// that the message arrived, and from which address</b> - before the reader
-    /// has so much as looked at it.
+    /// <b>And only when the sender said it is a file, or the address names a
+    /// kind of file this archive keeps.</b> Without this one the two rules
+    /// above read a pasted link as a handed-over file whenever it stands alone
+    /// in its line, which is how people paste links: a bare
+    /// <c>https://www.youtube.com/shorts/...</c> was fetched in full, found to
+    /// be <c>text/html</c>, and thrown away again. The throwing away was never
+    /// the point. <b>The request itself is what tells a stranger that the
+    /// message arrived, and from which address</b> - before the reader has so
+    /// much as looked at it.
     ///
-    /// The extension is a claim of the sender's, not proof, and it is not
-    /// treated as proof: what the server answers is still checked against the
-    /// same table, and a <c>.png</c> that arrives as <c>text/html</c> is
-    /// refused as before. The claim decides one thing only - whether this side
-    /// asks at all.
+    /// Said it, in the one way the protocol has of saying it: the
+    /// <c>&lt;x xmlns='jabber:x:oob'/&gt;</c> of XEP-0066, which a client
+    /// writes beside the body when it hands a file over (XEP-0363, section 5).
+    /// <b>That is a better signal than the name, and not merely an additional
+    /// one.</b> A person pasting a link produces a body and nothing else; a
+    /// client handing over a file produces the element, whatever the upload
+    /// service chose to call the file. The extension is what is left to go by
+    /// where the element is not - a client that omits it, a conversation
+    /// filled in out of a server's archive.
     ///
-    /// It is the rule the browser side has applied all along in chat/links.ts
-    /// when it decides whether a body is a picture; that this side was looser
-    /// is what this comment used to describe as the same rule. The browser
-    /// keeps to pictures, because that is what it shows inline; here video,
-    /// audio and PDF count too, because those are kept.
+    /// <b>It does not widen what a sender can aim at this side.</b> Somebody
+    /// who wants to know when their message was read can write
+    /// <c>https://their.example/pixel.gif</c> and be fetched by the extension
+    /// rule alone; nothing here was ever a defence against that, and the
+    /// content type check that follows cannot be one either. What the two
+    /// rules together are for is the ordinary link nobody meant as a file.
+    ///
+    /// Neither claim is treated as proof: what the server answers is still
+    /// checked against <see cref="MediaStore"/>, and a <c>.png</c> that
+    /// arrives as <c>text/html</c> is refused as before. The claim decides one
+    /// thing only - whether this side asks at all.
+    ///
+    /// The extension is the rule the browser side has applied all along in
+    /// chat/links.ts when it decides whether a body is a picture; that this
+    /// side was looser is what this comment used to describe as the same rule.
+    /// The browser keeps to pictures, because that is what it shows inline;
+    /// here video, audio and PDF count too, because those are kept.
     ///
     /// At most one file per message is taken, the first. A body is one URL or
     /// it is not; a body with several is a sentence.
@@ -112,12 +128,48 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
-        #region Detect(Body)
+        #region (private static) WasDeclared(Declared, Url)
+
+        /// <summary>
+        /// Is this the address the sender declared the message to be about
+        /// (XEP-0066)?
+        /// </summary>
+        /// <remarks>
+        /// <b>Compared, and not simply believed.</b> Ratatoskr hands over the
+        /// declaration only after checking it against the body - see
+        /// <c>OutOfBandData.UrlIn</c>, which gives nothing back when the two
+        /// disagree, because a message that shows one address and leads to
+        /// another is the oldest trick there is. This side asks the same
+        /// question again of the address it is about to fetch, so that the one
+        /// request that leaves this machine is made for a URL that stands in
+        /// the message a person is reading.
+        ///
+        /// Two checks of one rule, in the two places that each need it: there
+        /// because a library may not hand on something it knows to be
+        /// inconsistent, here because this is where the consequence is - the
+        /// request.
+        /// </remarks>
+        private static Boolean WasDeclared(Uri? Declared, Uri Url)
+
+            => Declared is not null &&
+               String.Equals(Declared.AbsoluteUri,
+                             Url.     AbsoluteUri,
+                             StringComparison.Ordinal);
+
+        #endregion
+
+        #region Detect(Body, Declared = null)
 
         /// <summary>
         /// The file this body hands over, or null when it hands over none.
         /// </summary>
-        public static Uri? Detect(String? Body)
+        /// <param name="Body">The text of the message.</param>
+        /// <param name="Declared">
+        /// XEP-0066: the address the sender declared the message to be about,
+        /// or null when they declared none - which is every pasted link, and
+        /// every client that leaves the element out.
+        /// </param>
+        public static Uri? Detect(String? Body, Uri? Declared = null)
         {
 
             if (Body is null)
@@ -163,11 +215,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 if (!bodyIsNothingButOneUrl)
                     continue;
 
-                // Plain http is not fetched. The file would travel readable,
-                // and a shared file is nothing this side wants to make more
-                // public than the sender did.
+                // Plain http is not fetched, declared or not. The file would
+                // travel readable, and a shared file is nothing this side wants
+                // to make more public than the sender did - which is a decision
+                // about this side and therefore not the sender's to make.
                 if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) &&
-                    NamesAKeptFile(uri))
+                    (WasDeclared(Declared, uri) || NamesAKeptFile(uri)))
                 {
                     return uri;
                 }

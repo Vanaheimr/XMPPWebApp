@@ -185,6 +185,32 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         public MediaRef? Media        { get; init; }
 
         /// <summary>
+        /// XEP-0066: the address the sender declared this message to be about,
+        /// or null when they declared none.
+        /// </summary>
+        /// <remarks>
+        /// <b>What this is for is the decision in
+        /// <see cref="MediaLinks.Detect"/></b>: whether to fetch the address
+        /// at all. A declaration is what tells a shared file from a pasted
+        /// link, and it tells them apart for an upload URL that names no file
+        /// - which the extension cannot.
+        ///
+        /// <b>Not written to the archive, and that is deliberate.</b> It is
+        /// the body repeated - the declaration is only handed on when the two
+        /// agree - so storing it would put the same address in every file line
+        /// twice. And nothing would read it back: the fetch is started once,
+        /// as the line is written, and a line read from disk a year later is
+        /// read to be shown and not to be fetched. What became of the file is
+        /// in <see cref="Media"/>, which is written.
+        ///
+        /// It therefore travels one way only, from the stanza to the fetch,
+        /// and a line that has been through the archive has none - the one
+        /// place where that is visible is a conversation filled in out of a
+        /// server's own archive, where the extension is what is left to go by.
+        /// </remarks>
+        public Uri? Declared     { get; init; }
+
+        /// <summary>
         /// XEP-0384: how the sending device's identity key stood when this
         /// line arrived - null for everything that did not arrive encrypted.
         /// </summary>

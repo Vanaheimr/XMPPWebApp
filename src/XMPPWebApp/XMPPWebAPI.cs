@@ -1765,7 +1765,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // every other client shows. The page turns it back into a picture -
             // see links.ts - and the archive replaces it with its own copy as
             // soon as it has one.
-            return (Chats.AddOutgoing(Jid, sent.MessageId!, sent.Url!.AbsoluteUri, DateTimeOffset.UtcNow),
+            //
+            // Declared, because here there is nothing to infer: this side
+            // uploaded the file a moment ago. The name the upload service gave
+            // it decides nothing, which it otherwise would - see MediaLinks.
+            return (Chats.AddOutgoing(Jid,
+                                      sent.MessageId!,
+                                      sent.Url!.AbsoluteUri,
+                                      DateTimeOffset.UtcNow,
+                                      Declared: sent.Url),
                     null);
 
         }

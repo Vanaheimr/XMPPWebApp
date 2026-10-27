@@ -656,6 +656,72 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ADeclaration_TravelsWithTheTextAndNotWithTheLine()
+
+        /// <summary>
+        /// XEP-0066: the declaration goes onto the line, both ways, and a
+        /// correction takes it along with the text it corrects.
+        /// </summary>
+        /// <remarks>
+        /// <b>With the text, for the reason the identity travels with it.</b>
+        /// What the declaration says is what <i>this</i> body is about, and the
+        /// body of a corrected line is the new one. Left standing, it would
+        /// have the archive fetch an address that no longer appears anywhere -
+        /// a request a contact could aim by writing a message and correcting
+        /// it, which is exactly the request this program stopped making.
+        ///
+        /// Both directions, because a file shared from here is declared too:
+        /// this side uploaded it and has nothing to infer.
+        ///
+        /// The last assertion is about the archive format. The declaration is
+        /// deliberately not in it - it is the body repeated, and nothing reads
+        /// a line back in order to fetch it - and a value written without
+        /// being read back is how a format quietly stops being one. Whoever
+        /// wants it stored writes it in <c>TryParse</c> too, and this is where
+        /// they are told.
+        /// </remarks>
+        [Test]
+        public void ADeclaration_TravelsWithTheTextAndNotWithTheLine()
+        {
+
+            var store  = new ChatStore();
+            var url    = new Uri("https://upload.example.org/a1b2/8f3c91d7e4");
+
+            var came   = store.AddIncoming(alice, "alice@example.org/phone", "m1",
+                                           url.AbsoluteUri, noon, Declared: url);
+
+            var went   = store.AddOutgoing(alice, "o1", url.AbsoluteUri, noon.AddMinutes(1),
+                                           Declared: url);
+
+            // The same file message, corrected into words.
+            var instead = store.AddIncoming(alice, "alice@example.org/phone", "m2",
+                                            "sorry, wrong conversation", noon.AddMinutes(2),
+                                            Corrects: "m1");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(came.Declared,  Is.EqualTo(url),
+                            "a file somebody handed over reached the line as a line of text");
+
+                Assert.That(went.Declared,  Is.EqualTo(url),
+                            "a file shared from here reached the line as a line of text");
+
+                Assert.That(instead.Body,     Is.EqualTo("sorry, wrong conversation"));
+
+                Assert.That(instead.Declared, Is.Null,
+                            "the corrected line still declares the file its old text was about");
+
+                Assert.That(came.ToJSON().Property("declared"), Is.Null,
+                            "the declaration reached the archive format, where nothing reads it " +
+                            "back - whoever stores it writes it in ChatMessage.TryParse too");
+
+            });
+
+        }
+
+        #endregion
+
         #region CorrectingTheLastLine_ReplacesItAndKeepsItsPlace()
 
         /// <summary>

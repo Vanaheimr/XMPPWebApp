@@ -621,7 +621,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                             message.Text,
                             entry.Timestamp,
                             RepliesTo:  message.RepliesTo?.Id,
-                            Quote:      message.Quote
+                            Quote:      message.Quote,
+
+                            // XEP-0066, out of the archived stanza - the
+                            // library reads it there as it does on the wire.
+                            // A file shared a year ago is still a file, and
+                            // this is the one path onto which a message
+                            // arrives that nothing here saw arrive.
+                            Declared:   message.FileUrl
                         );
 
                     else
@@ -634,7 +641,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                             Corrects:   message.ReplacesId,
                             RepliesTo:  message.RepliesTo?.Id,
                             Quote:      message.Quote,
-                            Archived:   true
+                            Archived:   true,
+                            Declared:   message.FileUrl
                         );
 
                 }
@@ -736,7 +744,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 Delayed:    Message.IsDelayed,
                 Corrects:   Message.ReplacesId,
                 RepliesTo:  Message.RepliesTo?.Id,
-                Quote:      Message.Quote
+                Quote:      Message.Quote,
+
+                // XEP-0066: the sender saying this message is about a file
+                // somewhere else. It is what decides whether the archive
+                // fetches the address - and the only thing that can decide it
+                // for an upload URL whose name says nothing. See MediaLinks.
+                Declared:   Message.FileUrl
             );
 
         }
@@ -928,6 +942,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             }
 
+            // No declaration on this path, and none missing. A file shared
+            // into an encrypted conversation goes out as an aesgcm:// address
+            // (XEP-0454) in a stanza nobody had to encrypt - the address
+            // carries the key - and that address is fetched wherever it
+            // stands, on its own rule. The library reads XEP-0066 off a plain
+            // stanza and off an archived one, not out of an envelope (see
+            // XMPPConnection.DecryptedMessage, which reads what the sender
+            // says about the message from inside it): a client that put the
+            // element there instead would have to be read first, and no
+            // client this program talks to does.
             Chats.AddIncoming(
                 chat,
                 Message.From.ToString(),
@@ -1312,6 +1336,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // an answer written on another device of ours carries its
             // quotation like any other, and it belongs beside the text and not
             // in it.
+            //
+            // XEP-0066 on both branches: a file shared from another device of
+            // ours and one received by it are a file shared and a file
+            // received. Without the declaration the copy that lies beside this
+            // conversation would depend on which device one happened to be
+            // reading it on.
             if (Carbon.IsSent)
                 Chats.AddOutgoing(
                     Carbon.OriginalTo.Bare,
@@ -1321,7 +1351,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     Carbon:     true,
                     RepliesTo:  Carbon.RepliesTo?.Id,
                     Quote:      Carbon.Quote,
-                    Corrects:   Carbon.ReplacesId
+                    Corrects:   Carbon.ReplacesId,
+                    Declared:   Carbon.FileUrl
                 );
 
             else
@@ -1334,7 +1365,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     Carbon:     true,
                     Corrects:   Carbon.ReplacesId,
                     RepliesTo:  Carbon.RepliesTo?.Id,
-                    Quote:      Carbon.Quote
+                    Quote:      Carbon.Quote,
+                    Declared:   Carbon.FileUrl
                 );
 
         }

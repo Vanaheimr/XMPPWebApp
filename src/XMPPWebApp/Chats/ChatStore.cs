@@ -329,6 +329,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// <param name="Carbon">Whether another device of our own received it (XEP-0280).</param>
         /// <param name="Corrects">XEP-0308: the id of the message this one replaces.</param>
         /// <param name="Identity">XEP-0384: how the sending device's key stood, for a line that arrived encrypted; null for one that did not.</param>
+        /// <param name="Declared">XEP-0066: the address the sender declared the message to be about - see <see cref="ChatMessage.Declared"/>.</param>
         /// <returns>The line as it now stands - the corrected one when there was something to correct.</returns>
         public ChatMessage AddIncoming(JID                  Chat,
                                        String               From,
@@ -341,7 +342,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                        OmemoIdentityCheck?  Identity   = null,
                                        String?              RepliesTo  = null,
                                        String?              Quote      = null,
-                                       Boolean              Archived   = false)
+                                       Boolean              Archived   = false,
+                                       Uri?                 Declared   = null)
         {
             lock (@lock)
             {
@@ -366,7 +368,15 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                         var corrected = conversation.Messages[index] with {
                                             Body       = Body,
                                             Corrected  = true,
-                                            Identity   = Identity
+                                            Identity   = Identity,
+
+                                            // For the same reason: the
+                                            // declaration is about the text
+                                            // it came with. A correction that
+                                            // kept the old one would have the
+                                            // archive fetch an address that
+                                            // no longer stands anywhere.
+                                            Declared   = Declared
                                         };
 
                         conversation.Messages[index]  = corrected;
@@ -400,7 +410,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                   RepliesTo,
                                   Quote
                               ) {
-                                  Identity = Identity
+                                  Identity  = Identity,
+                                  Declared  = Declared
                               };
 
                 Insert(conversation, message);
@@ -594,7 +605,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                        OmemoIdentityCheck?  Identity   = null,
                                        String?              RepliesTo  = null,
                                        String?              Quote      = null,
-                                       String?              Corrects   = null)
+                                       String?              Corrects   = null,
+                                       Uri?                 Declared   = null)
         {
             lock (@lock)
             {
@@ -613,10 +625,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
                         // The identity travels with the text, as for an
                         // incoming correction: what is displayed now went now.
+                        // And so does the declaration, for the reason the
+                        // incoming one gives.
                         var corrected = conversation.Messages[index] with {
                                             Body       = Body,
                                             Corrected  = true,
-                                            Identity   = Identity
+                                            Identity   = Identity,
+                                            Declared   = Declared
                                         };
 
                         conversation.Messages[index] = corrected;
@@ -642,7 +657,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                   RepliesTo:  RepliesTo,
                                   Quote:      Quote
                               ) {
-                                  Identity = Identity
+                                  Identity  = Identity,
+                                  Declared  = Declared
                               };
 
                 Insert(conversation, message);
