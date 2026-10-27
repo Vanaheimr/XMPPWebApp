@@ -2048,6 +2048,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// nobody could open was not delivered, so sending it again in the clear
         /// duplicates nothing.
         ///
+        /// <b>What has just been learnt is two things, and the second one
+        /// decides.</b> Not only that nobody could read it, but whether the far
+        /// end said so. A device list nobody answered about produces the first
+        /// without the second, and a sender who acts on the first alone writes
+        /// in the clear precisely on cue - see <see cref="HowToSend"/>.
+        ///
         /// <b>An answer is a proper XEP-0461 reply in either lane</b>: the
         /// reference, and the quoted lines marked as fallback. Encrypted, both
         /// go inside the envelope next to the body (XEP-0420) - beside the
@@ -2136,8 +2142,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                     }
 
-                    if (HowToSend(false, turnedOff, wasEncryptedBefore) == Delivery.Refused)
-                        return (null, CannotEncryptText(Jid, sent));
+                    // Asked with both halves of what the attempt produced: the
+                    // message reached nobody, and whether that was an answer.
+                    if (HowToSend(false, turnedOff, wasEncryptedBefore,
+                                  PlainWouldBeADowngrade: !sent.NoOmemoThere) == Delivery.Refused)
+                        return (null, wasEncryptedBefore
+                                          ? CannotEncryptText(Jid, sent)
+                                          : CouldNotFindOutText(Jid, sent));
 
                     logger.LogInformation("OMEMO: {Jid} has no device that can read an encrypted message; sending in the clear", Jid);
 
@@ -2185,6 +2196,36 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                "encrypted message. Either they removed their last one, or somebody took their device list out " +
                "of the way - from here the two look the same, so this was not sent in the clear. Ask them " +
                "through another channel, or turn encryption off for this conversation if you know why." +
+               (Sent?.Skipped.Count > 0
+                    ? $" ({Describe(Sent.Skipped)})"
+                    : "");
+
+        /// <summary>
+        /// Why a message was not sent: it could not be encrypted, and nobody
+        /// said whether the far end could have read it encrypted.
+        /// </summary>
+        /// <remarks>
+        /// <b>The refusal that used to be a message in the clear.</b> This is a
+        /// conversation with nothing encrypted in it yet, so the refusal above
+        /// does not apply - and for most contacts in that position the right
+        /// answer really is to write in the clear, because most of the world
+        /// does no OMEMO. The difference is whether their server said so. It
+        /// did not here: it said nothing, or something that was about the asking
+        /// rather than about them.
+        ///
+        /// <b>So this one names the retry first</b>, unlike its neighbour. The
+        /// likeliest cause by far is a server that was slow, and the next
+        /// attempt usually works - which is also why this must not be the end
+        /// of the road: the switch stays named, for the contact whose client is
+        /// broken in a way no patience fixes.
+        /// </remarks>
+        private static String CouldNotFindOutText(JID         Jid,
+                                                  OmemoSent?  Sent)
+
+            => $"This message to {Jid} was not sent. It could not be encrypted, and nothing says they are " +
+               "unable to read an encrypted message - their server did not answer that question. A message " +
+               "in the clear is exactly what somebody arranging this would be after, so it was not sent as " +
+               "one. Try again in a moment, or turn encryption off for this conversation if you know why." +
                (Sent?.Skipped.Count > 0
                     ? $" ({Describe(Sent.Skipped)})"
                     : "");

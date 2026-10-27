@@ -308,20 +308,34 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// and what is worth seeing is the shape of it: off wins over
         /// everything, then encryption when it is possible, and the refusal
         /// only where falling back would be a downgrade somebody arranged.
+        ///
+        /// <b>Two of those refusals, and the second one took a while to
+        /// see.</b> The first covers a conversation with an encrypted line
+        /// already in it; the second covers the first line of a conversation,
+        /// where nothing has been given up yet and the fallback therefore
+        /// looked free. It is not free when nobody said whether the far end can
+        /// read encryption at all - and a device list is fetched by the
+        /// encrypting itself, so a server that keeps quiet for a few seconds
+        /// produces exactly that state.
         /// </remarks>
-        [TestCase(true,  false, false, XMPPWebAPI.Delivery.Encrypted, TestName = "Encrypt when the far end can read it")]
-        [TestCase(true,  false, true,  XMPPWebAPI.Delivery.Encrypted, TestName = "... and go on encrypting where it has been encrypted")]
-        [TestCase(false, false, false, XMPPWebAPI.Delivery.Plain,     TestName = "In the clear where it has never been otherwise")]
-        [TestCase(false, false, true,  XMPPWebAPI.Delivery.Refused,   TestName = "But never fall back in a conversation that was encrypted")]
-        [TestCase(true,  true,  false, XMPPWebAPI.Delivery.Plain,     TestName = "Off means off")]
-        [TestCase(false, true,  true,  XMPPWebAPI.Delivery.Plain,     TestName = "... and off outranks the refusal as well")]
+        [TestCase(true,  false, false, false, XMPPWebAPI.Delivery.Encrypted, TestName = "Encrypt when the far end can read it")]
+        [TestCase(true,  false, true,  false, XMPPWebAPI.Delivery.Encrypted, TestName = "... and go on encrypting where it has been encrypted")]
+        [TestCase(false, false, false, false, XMPPWebAPI.Delivery.Plain,     TestName = "In the clear where it has never been otherwise")]
+        [TestCase(false, false, true,  false, XMPPWebAPI.Delivery.Refused,   TestName = "But never fall back in a conversation that was encrypted")]
+        [TestCase(false, false, false, true,  XMPPWebAPI.Delivery.Refused,   TestName = "... nor on a first line nobody answered about")]
+        [TestCase(true,  true,  false, false, XMPPWebAPI.Delivery.Plain,     TestName = "Off means off")]
+        [TestCase(false, true,  true,  false, XMPPWebAPI.Delivery.Plain,     TestName = "... and off outranks the refusal as well")]
+        [TestCase(false, true,  false, true,  XMPPWebAPI.Delivery.Plain,     TestName = "... both of them")]
+        [TestCase(true,  false, false, true,  XMPPWebAPI.Delivery.Encrypted, TestName = "A downgrade is not a question while the encryption works")]
         public void TheSendingPolicy(Boolean               CanEncrypt,
                                      Boolean               TurnedOff,
                                      Boolean               WasEncryptedBefore,
+                                     Boolean               PlainWouldBeADowngrade,
                                      XMPPWebAPI.Delivery   Expected)
         {
 
-            Assert.That(XMPPWebAPI.HowToSend(CanEncrypt, TurnedOff, WasEncryptedBefore),
+            Assert.That(XMPPWebAPI.HowToSend(CanEncrypt, TurnedOff, WasEncryptedBefore,
+                                             PlainWouldBeADowngrade),
                         Is.EqualTo(Expected));
 
         }

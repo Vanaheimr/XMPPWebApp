@@ -861,6 +861,79 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ANeverEncryptedChat_IsNotDowngradedOnASilentAnswer()
+
+        /// <summary>
+        /// The far end could not be encrypted to and nothing says they are
+        /// unable to read encryption: the message is not sent at all.
+        /// </summary>
+        /// <remarks>
+        /// <b>The other half of the test above, and the harder half to see.</b>
+        /// There, Alice does no OMEMO, her server says so, and in the clear is
+        /// where the message belongs. Here her device-list node holds something
+        /// this program cannot read - so the node is there, she is plainly doing
+        /// OMEMO with somebody, and all this side knows is that it did not find
+        /// out. The two used to end in the same place: the encryption reached
+        /// nobody, so out it went unencrypted.
+        ///
+        /// <b>Which is the downgrade, and it was reachable from outside.</b> The
+        /// refusal for a conversation that had been encrypted before did not
+        /// cover this one, because nothing in it ever was - and it is the first
+        /// message of a new conversation, which is the one that says what the
+        /// conversation is for. Holding up a single stanza long enough was
+        /// enough to get it, and it looked to both sides like an ordinary
+        /// message.
+        ///
+        /// An unreadable list is the quickest way to produce the state through a
+        /// real server; a server that takes longer than ten seconds to answer
+        /// produces the same one, and both arrive here as the same value - see
+        /// PepLookup, and the Ratatoskr tests that hold the timeout itself.
+        /// </remarks>
+        [Test]
+        public async Task ANeverEncryptedChat_IsNotDowngradedOnASilentAnswer()
+        {
+
+            // Alice's device list, in a dialect this program does not read. She
+            // is not connected and does not need to be: what answers is the
+            // node, and the node is hers.
+            xmpp!.GetAccount($"alice@{xmpp.Domain}")!
+                 .PublishPepItem(OmemoDeviceList.Node,
+                                 OmemoDeviceList.ItemId,
+                                 "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
+
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+            var peer = JID.Parse($"alice@{xmpp.Domain}");
+
+            var (message, refusal) = await api.SendToAsync(peer, "Eight at the station, then.");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(message, Is.Null,
+                            "the message was sent although nothing said Alice cannot read an " +
+                            "encrypted one - and in the clear is how it went");
+
+                Assert.That(Lines(), Is.Empty,
+                            "and a line nobody sent stands in the conversation");
+
+                // A refusal has to be actionable or it is an obstacle. The
+                // likeliest cause is a server that was slow, so the retry is
+                // named - and the switch, for the client that is broken for
+                // good.
+                Assert.That(refusal, Does.Contain("Try again"),
+                            "the refusal does not say the one thing that usually helps");
+
+                Assert.That(refusal, Does.Contain("encryption off"),
+                            "nor the way out for a contact whose client stays broken");
+
+            });
+
+        }
+
+        #endregion
+
         #region TheSwitch_TurnsItOffAndIsRemembered()
 
         /// <summary>

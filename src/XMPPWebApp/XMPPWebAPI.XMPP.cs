@@ -1117,12 +1117,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 if (!await Client.EnableOmemoAsync(store))
                 {
 
-                    logger.LogWarning("OMEMO: the device list or the bundle was not accepted by the server; " +
+                    logger.LogWarning("OMEMO: the device list or the bundle was not published; " +
                                       "encrypted messages cannot be read");
 
+                    // Not "the server refused it": it may equally have said
+                    // nothing, and in that case nothing was published on
+                    // purpose - a list built on an answer that never came would
+                    // have displaced this account's other devices. See
+                    // EnableOmemoAsync.
                     PublishNotice("warning",
-                                  "This device could not be announced for encrypted messages: the server did not " +
-                                  "accept the OMEMO device list. Whatever is sent encrypted will not be readable here.");
+                                  "This device could not be announced for encrypted messages: the OMEMO device list " +
+                                  "was not published. Whatever is sent encrypted will not be readable here.");
 
                     return;
 
@@ -1278,6 +1283,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// they were after, and it would look to the writer like an ordinary
         /// message. So it refuses instead, and says why.
         ///
+        /// <b>And the same thing one conversation earlier.</b> That refusal
+        /// wanted an encrypted line in the conversation already, which left the
+        /// first line of every conversation open: nothing had been encrypted
+        /// yet, so nothing was being given up, so in the clear it went. But the
+        /// device list is fetched by the encrypting itself, and a fetch nobody
+        /// answers is indistinguishable from a contact who does no OMEMO unless
+        /// somebody keeps the two apart - so whoever could delay one stanza had
+        /// the first message of every new conversation in the clear, which is
+        /// where the ones worth reading are. That is what the fourth answer is
+        /// for: fall back where the far end said they cannot read encryption,
+        /// refuse where nobody said anything. <see cref="OmemoSent.NoOmemoThere"/>
+        /// is what it is asked with.
+        ///
         /// <b>Off outranks all of it</b>, including the refusal. There are
         /// clients whose OMEMO is broken in ways no correctness on this side
         /// repairs, and the answer to those is a switch rather than a contact
@@ -1293,14 +1311,27 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <param name="CanEncrypt">Whether OMEMO is on and the far end reachable by it.</param>
         /// <param name="TurnedOff">Whether somebody turned encryption off for this conversation.</param>
         /// <param name="WasEncryptedBefore">Whether anything in this conversation ever travelled encrypted.</param>
+        /// <param name="PlainWouldBeADowngrade">
+        /// Whether sending this in the clear instead would be giving something
+        /// up. True where the encryption reached nobody and the far end was not
+        /// shown to be unable to read it; false where there is nothing to give
+        /// up - their server answered that they publish no OMEMO device, or
+        /// this client has no OMEMO of its own and nothing was ever attempted.
+        ///
+        /// The default is false, which is what the first of the two questions
+        /// wants: before sending, nothing has been attempted and there is
+        /// nothing to give up yet.
+        /// </param>
         internal static Delivery HowToSend(Boolean  CanEncrypt,
                                            Boolean  TurnedOff,
-                                           Boolean  WasEncryptedBefore)
+                                           Boolean  WasEncryptedBefore,
+                                           Boolean  PlainWouldBeADowngrade = false)
 
-            => TurnedOff           ? Delivery.Plain
-             : CanEncrypt          ? Delivery.Encrypted
-             : WasEncryptedBefore  ? Delivery.Refused
-             :                       Delivery.Plain;
+            => TurnedOff                ? Delivery.Plain
+             : CanEncrypt               ? Delivery.Encrypted
+             : WasEncryptedBefore       ? Delivery.Refused
+             : PlainWouldBeADowngrade   ? Delivery.Refused
+             :                            Delivery.Plain;
 
         #endregion
 
