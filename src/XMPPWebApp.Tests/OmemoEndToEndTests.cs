@@ -934,6 +934,239 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ARetractionOfAnEncryptedLine_IsNotNamedInTheClearOnASilence()
+
+        /// <summary>
+        /// The encrypted retraction reached nobody and nothing says it could
+        /// not have been read: the line stays, and its name does not go on the
+        /// wire.
+        /// </summary>
+        /// <remarks>
+        /// <b>A retraction carries no words, which is why it used to go in the
+        /// clear whenever the encrypted one did not get through.</b> It does
+        /// carry the id of the line it takes back, though - and that line went
+        /// encrypted. Which message in this conversation was withdrawn is the
+        /// shape of the conversation around words that were not said in the
+        /// clear, and the library puts the &lt;retract/&gt; inside the envelope
+        /// for exactly that reason.
+        ///
+        /// The weighing behind the fallback - better the name on the wire than
+        /// a line that can never be taken back - holds where no encrypted
+        /// retraction can ever get through. It does not hold for an answer that
+        /// merely did not arrive, because the next attempt usually gets
+        /// through; and it is the same delayed stanza that the sending policy
+        /// refuses to reward, so rewarding it here would have left the trick
+        /// one door.
+        /// </remarks>
+        [Test]
+        public async Task ARetractionOfAnEncryptedLine_IsNotNamedInTheClearOnASilence()
+        {
+
+            // Alice's device list, in a dialect this program does not read -
+            // so her devices stay unknown rather than known to be absent.
+            xmpp!.GetAccount($"alice@{xmpp.Domain}")!
+                 .PublishPepItem(OmemoDeviceList.Node,
+                                 OmemoDeviceList.ItemId,
+                                 "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
+
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+            var peer = JID.Parse($"alice@{xmpp.Domain}");
+
+            // A line that went encrypted, as the conversation remembers it.
+            api.Chats.AddOutgoing(peer, "m1", "Forget I said that.", DateTimeOffset.UtcNow,
+                                  Identity: OmemoIdentityCheck.Known);
+
+            var (taken, refusal) = await api.TakeBackAsync(peer, "m1");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(taken, Is.Null,
+                            "the line was taken back although the only retraction that got out named " +
+                            "it in the clear");
+
+                Assert.That(api.Chats.Find(peer, "m1")?.Retracted, Is.False,
+                            "and it is emptied here, so the retry the refusal offers is about a line " +
+                            "this side has already thrown away");
+
+                Assert.That(MessageFrames().Any(frame => frame.Contains(MessageRetraction.Namespace,
+                                                                        StringComparison.Ordinal)),
+                            Is.False,
+                            "which line was taken back stood beside the encryption, in the clear");
+
+                Assert.That(refusal, Does.Contain("try again"),
+                            "the refusal does not name the one thing that usually helps");
+
+            });
+
+        }
+
+        #endregion
+
+        #region ARetractionGoesInTheClear_WhereTheFarEndSaysItHasNoOmemo()
+
+        /// <summary>
+        /// The far end publishes no OMEMO device: the plain retraction goes,
+        /// and the line is taken back.
+        /// </summary>
+        /// <remarks>
+        /// <b>The case the fallback was written for, and it has to stay.</b>
+        /// Here no encrypted retraction will ever get through - Alice's server
+        /// says there is no device list, and no amount of trying again changes
+        /// that. The name of the line on the wire is then the lesser of the two
+        /// evils, because the other one is a line that cannot be taken back at
+        /// all.
+        ///
+        /// Which is why the refusal beside this one had to be narrowed rather
+        /// than simply added: reading every unreadable retraction as a reason to
+        /// refuse would have left regretted lines standing for everybody who
+        /// does no OMEMO, and that is most of the world.
+        /// </remarks>
+        [Test]
+        public async Task ARetractionGoesInTheClear_WhereTheFarEndSaysItHasNoOmemo()
+        {
+
+            // Alice has published nothing at all, which her server says plainly.
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+
+            var peer = JID.Parse($"alice@{xmpp!.Domain}");
+
+            api.Chats.AddOutgoing(peer, "m1", "Forget I said that.", DateTimeOffset.UtcNow,
+                                  Identity: OmemoIdentityCheck.Known);
+
+            var (taken, refusal) = await api.TakeBackAsync(peer, "m1");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(taken, Is.Not.Null,
+                            refusal ?? "a line nobody will ever be able to take back encrypted was " +
+                                       "left standing");
+
+                Assert.That(api.Chats.Find(peer, "m1")?.Retracted, Is.True);
+
+                Assert.That(MessageFrames().Any(frame => frame.Contains(MessageRetraction.Namespace,
+                                                                        StringComparison.Ordinal)),
+                            Is.True,
+                            "no retraction got out in either form, so the line stands at the far end");
+
+            });
+
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Every message stanza the server has seen, in either direction.
+        /// </summary>
+        private IReadOnlyList<String> MessageFrames()
+
+            => [.. xmpp!.Sessions
+                        .SelectMany(session => session.Received.Concat(session.Sent))
+                        .Where     (frame   => frame.StartsWith("<message", StringComparison.Ordinal))];
+
+        #region AnAnnouncementThatFailed_IsMadeAgainOnTheNextConnection()
+
+        /// <summary>
+        /// The device list could not be published, so this device is not
+        /// announced - and the next connection says so again rather than
+        /// assuming it is done.
+        /// </summary>
+        /// <remarks>
+        /// <b>What this is about is one word in the gate.</b> Switching OMEMO
+        /// on is reached from every transition into Connected and leaves at
+        /// once if there is nothing to do - and "nothing to do" used to mean
+        /// "OMEMO is on". It can be on with this device in nobody's list: then
+        /// what is written from here still goes out encrypted, and everybody
+        /// who writes here first writes in the clear, because a contact
+        /// encrypts to the devices they can see. Gated on "is it on", that
+        /// state lasted the whole run of the program and nothing said so.
+        ///
+        /// The failure used here is the one worth having twice: this account's
+        /// own node holds a list in a dialect this program cannot read - another
+        /// client of the same person, one version apart. Publishing over it
+        /// would displace whatever device stands in it, so nothing is published
+        /// at all, and the state above is exactly what is left behind.
+        /// </remarks>
+        [Test]
+        public async Task AnAnnouncementThatFailed_IsMadeAgainOnTheNextConnection()
+        {
+
+            var mine = $"me@{xmpp!.Domain}";
+
+            xmpp.GetAccount(mine)!
+                .PublishPepItem(OmemoDeviceList.Node,
+                                OmemoDeviceList.ItemId,
+                                "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
+
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+            await Until(() => api.Client?.OmemoEnabled == true, "OMEMO to be switched on");
+
+            // Waits out whatever the connection set off - the gate serialises
+            // the two - and then asks once itself, which is what a second
+            // connection would do.
+            await api.SwitchOmemoOnAsync(api.Client!);
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(api.Client!.OmemoAnnounced, Is.False,
+                            "this device counts as announced although nothing was published");
+
+                Assert.That(api.Client!.OmemoEnabled, Is.True,
+                            "OMEMO was switched off over a list that could not be read, which answers " +
+                            "it by writing in the clear");
+
+                Assert.That(OwnStoredList(), Does.Contain("urn:xmpp:omemo:1"),
+                            "the unreadable list was published over, which displaces whatever device " +
+                            "stood in it");
+
+            });
+
+            // The other client publishes something this one can read.
+            xmpp.GetAccount(mine)!
+                .PublishPepItem(OmemoDeviceList.Node,
+                                OmemoDeviceList.ItemId,
+                                $"<devices xmlns='{OmemoEncryptedElement.Namespace}'>" +
+                                "<device id='4711'/></devices>");
+
+            await api.SwitchOmemoOnAsync(api.Client!);
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(api.Client!.OmemoAnnounced, Is.True,
+                            "a failed announcement was never made again, so nobody can encrypt to " +
+                            "this device for as long as the program runs");
+
+                Assert.That(OwnStoredList(), Does.Contain("4711"),
+                            "and the device that was already in the list is gone from it");
+
+                Assert.That(OwnStoredList(), Does.Contain(api.Client!.Omemo!.Identity.DeviceId.ToString()),
+                            "while this one is still not in it");
+
+            });
+
+        }
+
+        /// <summary>
+        /// This account's own device list as the server keeps it.
+        /// </summary>
+        private String OwnStoredList()
+        {
+
+            var stored = xmpp!.GetAccount($"me@{xmpp.Domain}")!
+                              .GetPepItems(OmemoDeviceList.Node, OmemoDeviceList.ItemId);
+
+            return stored.Count == 1 ? stored[0].Payload : "";
+
+        }
+
+        #endregion
+
         #region TheSwitch_TurnsItOffAndIsRemembered()
 
         /// <summary>

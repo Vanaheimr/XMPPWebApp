@@ -1938,6 +1938,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// correction is refused rather than sent in the clear. A line that
         /// went in the clear is corrected in the clear, which tells nobody
         /// anything the line had not told them already.
+        ///
+        /// <b>The refusal says which of the two happened</b>, because the way
+        /// out differs: a far end that has said it has no OMEMO device will not
+        /// start having one, so what is left is to say the line again or take
+        /// it back - and taking it back works, which the retraction's own
+        /// weighing makes sure of. A server that did not answer usually answers
+        /// the next time, and then the advice is to wait a moment rather than
+        /// to give up on the line.
         /// </remarks>
         /// <returns>
         /// The line as it now stands, or null and the sentence that says why
@@ -1963,10 +1971,21 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                 var sent = await client.SendEncryptedCorrectionAsync(Jid, Body, line.Id);
 
+                // Refused either way - in the clear the correction would carry
+                // the very words that were encrypted - but not for the same
+                // reason, and the way out is not the same either. Where the far
+                // end has said they have no device, there is nothing to wait
+                // for and the retraction is what is left; where nobody said
+                // anything, the next attempt usually gets through.
                 if (!sent.Readable)
-                    return (null, "That line went encrypted, and nobody at the far end can read an " +
-                                  "encrypted correction now. In the clear it would carry the very " +
-                                  "text that was encrypted - say the line again, or take it back.");
+                    return (null, sent.NoOmemoThere
+                                      ? $"That line went encrypted, and {Jid} now has no device that can read " +
+                                         "an encrypted correction. In the clear it would carry the very text " +
+                                         "that was encrypted - say the line again, or take it back."
+                                      : $"That line went encrypted, and the correction reached none of {Jid}'s " +
+                                         "devices - while nothing says they could not have read it, because " +
+                                         "their server did not answer. In the clear it would carry the very " +
+                                         "text that was encrypted. Try again in a moment.");
 
             }
 
@@ -1987,13 +2006,27 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <remarks>
         /// <b>A line that went encrypted is taken back encrypted</b>, the
         /// &lt;retract/&gt; inside the envelope, so that which line it was is
-        /// not said in the clear either. When nobody can read an encrypted one
-        /// any more, the plain retraction goes instead: unlike a correction it
-        /// carries no words, and a line that could not be taken back at all
-        /// would be worse than the name of it on the wire.
+        /// not said in the clear either.
+        ///
+        /// <b>Where no encrypted retraction can get through at all, the plain
+        /// one goes.</b> Unlike a correction it carries no words, and a line
+        /// that could not be taken back at all would be worse than the name of
+        /// it on the wire. That holds where the far end has said they have no
+        /// OMEMO device, and where there is no OMEMO on this side - in both,
+        /// the choice really is between the name and never.
+        ///
+        /// <b>Where nobody said anything, it is refused instead.</b> That
+        /// weighing assumed the alternative was never, and for an answer that
+        /// simply did not arrive it is not: the next attempt usually gets
+        /// through. The plain retraction would give away which line was
+        /// withdrawn for no gain - and give it to whoever held the answer up in
+        /// order to be given it, which is the same stanza-delaying trick the
+        /// sending policy refuses to reward (see <see cref="HowToSend"/>).
         ///
         /// Sent before the line is emptied here, so that a retraction that
-        /// could not be sent leaves the line as it was.
+        /// could not be sent leaves the line as it was - which is what makes
+        /// the retry a real offer rather than advice about a line that is
+        /// already gone from this side.
         /// </remarks>
         /// <returns>
         /// The emptied line, or null and the sentence that says why there was
@@ -2014,16 +2047,43 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                               "only take back what this account said.");
             }
 
-            var encrypted = line.Encrypted &&
-                            client.OmemoEnabled &&
-                            (await client.SendEncryptedRetractionAsync(Jid, MessageId)).Readable;
+            // Null where nothing encrypted was even attempted: the line itself
+            // went in the clear, or there is no OMEMO here to take it back
+            // with.
+            var sent = line.Encrypted && client.OmemoEnabled
+                           ? await client.SendEncryptedRetractionAsync(Jid, MessageId)
+                           : null;
 
-            if (!encrypted)
+            if (sent is not null && !sent.Readable && !sent.NoOmemoThere)
+                return (null, CouldNotTakeBackText(Jid));
+
+            if (sent?.Readable != true)
                 await client.RetractMessageAsync(Jid, MessageId);
 
             return (Chats.Retract(Jid, MessageId, Incoming: false), null);
 
         }
+
+        /// <summary>
+        /// Why a line was not taken back: the encrypted retraction reached none
+        /// of the far end's devices, and nothing says it could not have been
+        /// read.
+        /// </summary>
+        /// <remarks>
+        /// <b>No switch is offered here, unlike the refusals around sending,
+        /// and that is not an omission.</b> Turning encryption off for the
+        /// conversation would not help: what is being protected is the name of
+        /// a line that <i>already</i> went encrypted, and nothing anybody sets
+        /// now changes what that line was. The retry is the whole of the way
+        /// out, and it is usually enough.
+        /// </remarks>
+        private static String CouldNotTakeBackText(JID Jid)
+
+            => $"That line went encrypted, and the retraction reached none of {Jid}'s devices - while " +
+               "nothing says they could not have read it, because their server did not answer that " +
+               "question. A retraction in the clear would name the line that was taken back, which is " +
+               "the one thing the encryption was keeping quiet. The line is still here: try again in a " +
+               "moment.";
 
         #endregion
 

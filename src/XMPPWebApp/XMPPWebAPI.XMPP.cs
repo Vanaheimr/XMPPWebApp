@@ -1060,7 +1060,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
         #endregion
 
-        #region (private) SwitchOmemoOnAsync(Client)
+        #region (internal) SwitchOmemoOnAsync(Client)
 
         /// <summary>
         /// XEP-0384: reads this account's key material off the disk, publishes
@@ -1071,10 +1071,26 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// <b>Reached from every transition into Connected and not from
         /// ConnectAsync</b>, because a connection that only came about at the
         /// third attempt was never in ConnectAsync's successful path. The gate
-        /// and <see cref="XMPPClient.OmemoEnabled"/> make the repetition
+        /// and <see cref="XMPPClient.OmemoAnnounced"/> make the repetition
         /// harmless: what would otherwise be repeated is the publishing of a
         /// device list, and that is the one operation in OMEMO which hurts
         /// other people's clients when it goes wrong.
+        ///
+        /// <b>Announced and not merely switched on</b>, and the difference is
+        /// the whole point of coming back here. A publication that did not get
+        /// through leaves OMEMO on with this device in nobody's list: what is
+        /// written from here still goes out encrypted, and everybody who writes
+        /// here first writes in the clear, because a contact encrypts to the
+        /// devices they can see. Gated on "is OMEMO on" that state lasted the
+        /// whole run of the program. Gated on this, the next connection mends
+        /// it - and the key material is kept, which is also what keeps a retry
+        /// from changing this account's fingerprint; the store built below is
+        /// not read a second time.
+        ///
+        /// Internal rather than private for the same reason as the sending: the
+        /// gate is the whole of what this method decides, and reaching it
+        /// through a connection that has to fail and then stop failing would
+        /// mean a test about timing instead of a test about the gate.
         ///
         /// <b>Nothing here can fail the connection.</b> A web app that refused
         /// to sign in because a key file is unreadable would have turned an
@@ -1087,10 +1103,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// a directory to keep the keys in, this returns at once and the
         /// account never learns of this device. See --no-omemo.
         /// </remarks>
-        private async Task SwitchOmemoOnAsync(XMPPClient Client)
+        internal async Task SwitchOmemoOnAsync(XMPPClient Client)
         {
 
-            if (OmemoDirectory is null || Client.OmemoEnabled)
+            if (OmemoDirectory is null || Client.OmemoAnnounced)
                 return;
 
             await switchingOnOmemo.WaitAsync();
@@ -1102,7 +1118,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                 // ordinary case out of the semaphore, this one is the one that
                 // holds. And a client replaced while we waited is a client
                 // whose keys are no longer this account's.
-                if (Client.OmemoEnabled || !ReferenceEquals(Client, this.Client))
+                if (Client.OmemoAnnounced || !ReferenceEquals(Client, this.Client))
                     return;
 
                 // The directory before the file: OmemoFileStore creates what is
