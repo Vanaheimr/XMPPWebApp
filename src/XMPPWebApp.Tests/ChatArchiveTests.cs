@@ -883,6 +883,20 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// is the archive deciding to fetch: the set of messages it remembers
         /// having fetched for, which it writes before the attempt and not after
         /// it.
+        ///
+        /// <b>One line and one assertion, deliberately.</b> That the same
+        /// address is <i>not</i> fetched without a declaration is held in
+        /// MediaLinksTests, where it is a pure function of two arguments and
+        /// the answer is the same every time. Asserting it here as well would
+        /// mean knowing when the write loop has finished considering a line it
+        /// decided against - which is a thing with no signal, and an assertion
+        /// without one is a race dressed as a check.
+        ///
+        /// <c>FlushAsync</c> is not that signal: it waits for the disk, and
+        /// the writing is counted before the fetching is started. The first
+        /// version of this test asserted straight after the flush and was
+        /// green here and red in CI, which is the race deciding and not the
+        /// rule. Hence the wait below, which has one.
         /// </remarks>
         [Test]
         public async Task ADeclaredFile_IsFetchedWhateverItIsCalled()
@@ -890,30 +904,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             const String nameless = "https://127.0.0.1/a1b2/8f3c91d7e4";
 
-            await using var declared  = Open(KeepMedia: true);
-            await using var guessed   = Open(KeepMedia: true);
+            await using var archive = Open(KeepMedia: true);
 
-            declared.Record(Incoming(alice, "m1", nameless, september) with {
-                                Declared = new Uri(nameless)
-                            });
+            archive.Record(Incoming(alice, "m1", nameless, september) with {
+                               Declared = new Uri(nameless)
+                           });
 
-            guessed. Record(Incoming(alice, "m1", nameless, september));
+            await archive.FlushAsync(TimeSpan.FromSeconds(30));
 
-            await declared.FlushAsync(TimeSpan.FromSeconds(30));
-            await guessed. FlushAsync(TimeSpan.FromSeconds(30));
+            // The flush says the line is written, not that it has been looked
+            // at. What is waited for is the looking - and the wait ends of its
+            // own accord, so a declaration that never arrives fails here
+            // rather than hanging.
+            var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
 
-            Assert.Multiple(() =>
+            while (archive.RememberedFetches == 0 &&
+                   DateTime.UtcNow < until)
             {
+                await Task.Delay(25);
+            }
 
-                Assert.That(declared.RememberedFetches, Is.EqualTo(1),
-                            "the declaration did not reach the archive: a file the sender said " +
-                            "was one was left where it lay");
-
-                Assert.That(guessed.RememberedFetches,  Is.EqualTo(0),
-                            "the same line without a declaration was fetched, so this test says " +
-                            "nothing about the declaration");
-
-            });
+            Assert.That(archive.RememberedFetches, Is.EqualTo(1),
+                        "the declaration did not reach the archive: a file the sender said was " +
+                        "one was left where it lay");
 
         }
 
