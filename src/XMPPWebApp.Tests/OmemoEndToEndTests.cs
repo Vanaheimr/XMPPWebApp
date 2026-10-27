@@ -183,7 +183,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
-            await Until(() => api.Client?.OmemoEnabled == true,
+            await Until(() => api.Client?.OmemoAnnounced == true,
                         "the web app to announce its OMEMO device");
 
             var alice = ClientFor("alice");
@@ -266,7 +266,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
-            await Until(() => api.Client?.OmemoEnabled == true,
+            await Until(() => api.Client?.OmemoAnnounced == true,
                         "the web app to announce its OMEMO device");
 
             var alice = ClientFor("alice");
@@ -318,7 +318,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
-            await Until(() => api.Client?.OmemoEnabled == true, "the first start to announce its device");
+            await Until(() => api.Client?.OmemoAnnounced == true, "the first start to announce its device");
 
             var first  = api.Client!.Omemo!.Fingerprint;
             var device = api.Client.Omemo.Identity.DeviceId;
@@ -341,7 +341,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await second.LoadDatabase();
                 await second.ApplyAccountAsync(Account("me"), Save: false);
 
-                await Until(() => second.Client?.OmemoEnabled == true, "the second start to announce its device");
+                await Until(() => second.Client?.OmemoAnnounced == true, "the second start to announce its device");
 
                 Assert.Multiple(() =>
                 {
@@ -415,7 +415,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 // And only now does this side start, on that store.
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
 
-                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+                await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 await alice.SendEncryptedMessageAsync(JID.Parse($"me@{xmpp.Domain}"), "Shall we meet at eight?");
 
@@ -524,7 +524,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await alice.EnableOmemoAsync();
 
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
-                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+                await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 XMPPMessage? atAlice = null;
                 alice.OnEncryptedMessage += (timestamp, sender, message, _, ct) => { atAlice = message; return Task.CompletedTask; };
@@ -587,9 +587,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 // has it: Alice learns whom she can encrypt to when she switches
                 // OMEMO on, and a device announced after that may be one she
                 // does not know of yet - her first line then reaches nobody
-                // here, now and then, depending on who was quicker.
+                // here, now and then, depending on who was quicker. Which is
+                // also why the wait below is for the announcement and not for
+                // OMEMO being on: on is true three round trips earlier - a
+                // fetch and two publications - so waiting for that left open
+                // the very window this ordering is here to close.
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
-                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+                await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 await alice.ConnectAsync();
                 await alice.EnableOmemoAsync();
@@ -693,9 +697,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 // has it: Alice learns whom she can encrypt to when she switches
                 // OMEMO on, and a device announced after that may be one she
                 // does not know of yet - her first line then reaches nobody
-                // here, now and then, depending on who was quicker.
+                // here, now and then, depending on who was quicker. Which is
+                // also why the wait below is for the announcement and not for
+                // OMEMO being on: on is true three round trips earlier - a
+                // fetch and two publications - so waiting for that left open
+                // the very window this ordering is here to close.
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
-                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+                await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 await alice.ConnectAsync();
                 await alice.EnableOmemoAsync();
@@ -837,7 +845,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await alice.ConnectAsync();
 
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
-                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+                await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 XMPPMessage? atAlice = null;
                 alice.OnMessage += (timestamp, sender, message, ct) => { atAlice = message; return Task.CompletedTask; };
@@ -902,7 +910,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                                  "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
-            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+            await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var peer = JID.Parse($"alice@{xmpp.Domain}");
 
@@ -970,7 +978,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                                  "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
-            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+            await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var peer = JID.Parse($"alice@{xmpp.Domain}");
 
@@ -1030,7 +1038,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             // Alice has published nothing at all, which her server says plainly.
             await api!.ApplyAccountAsync(Account("me"), Save: false);
-            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+            await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var peer = JID.Parse($"alice@{xmpp!.Domain}");
 
@@ -1192,7 +1200,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 await alice.EnableOmemoAsync();
 
                 await api!.ApplyAccountAsync(Account("me"), Save: false);
-                await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+                await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
                 var peer = JID.Parse($"alice@{xmpp!.Domain}");
 
@@ -1283,7 +1291,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
-            await Until(() => api.Client?.OmemoEnabled == true, "the web app to announce its OMEMO device");
+            await Until(() => api.Client?.OmemoAnnounced == true, "the web app to announce its OMEMO device");
 
             var directory = Path.Combine(root, "omemo");
             var files     = Directory.GetFiles(directory);

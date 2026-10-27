@@ -239,7 +239,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             await api!.ApplyAccountAsync(Account("me"), Save: false);
 
-            await Until(() => api.Client?.OmemoEnabled == true,
+            await Until(() => api.Client?.OmemoAnnounced == true,
                         "the web app to announce its OMEMO device");
 
             var (message, refusal) = await api.SendFileToAsync(Alice, APicture(), "passport.png");
