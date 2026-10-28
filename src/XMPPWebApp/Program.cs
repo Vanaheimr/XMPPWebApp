@@ -366,16 +366,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             #region Logging
 
-            using var loggerFactory = LoggerFactory.Create(builder => {
-
-                builder.AddSimpleConsole(options => {
-                    options.SingleLine       = true;
-                    options.TimestampFormat  = "HH:mm:ss ";
-                });
-
-                builder.SetMinimumLevel(verbose ? LogLevel.Trace : LogLevel.Information);
-
-            });
+            using var loggerFactory = ConsoleLog(verbose);
 
             #endregion
 
@@ -793,6 +784,44 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             return Environment.CurrentDirectory;
 
         }
+
+        #endregion
+
+        #region (internal) ConsoleLog(Verbose)
+
+        /// <summary>
+        /// The log of this program: one line per entry, the time of day in
+        /// front of it, and the categories shortened.
+        /// </summary>
+        /// <remarks>
+        /// A method of its own so that there is something to ask. Inside Main
+        /// the one thing worth holding on to - that what is handed to Hermod,
+        /// Ratatoskr and this application shortens its categories - could not
+        /// be read by any test, and a wrapper quietly dropped from a line in
+        /// the middle of a method this long is not something a log is compared
+        /// against afterwards.
+        ///
+        /// Shortened around the factory and not around the console, because
+        /// the console formatter prints the category it is handed and has no
+        /// say over it; see <see cref="LogCategories"/>.
+        /// </remarks>
+        /// <param name="Verbose">Whether everything down to Trace is wanted.</param>
+        internal static ILoggerFactory ConsoleLog(Boolean Verbose)
+
+            => new ShortLogCategories(
+
+                   LoggerFactory.Create(builder => {
+
+                       builder.AddSimpleConsole(options => {
+                           options.SingleLine       = true;
+                           options.TimestampFormat  = "HH:mm:ss ";
+                       });
+
+                       builder.SetMinimumLevel(Verbose ? LogLevel.Trace : LogLevel.Information);
+
+                   })
+
+               );
 
         #endregion
 
