@@ -790,38 +790,51 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         #region (internal) ConsoleLog(Verbose)
 
         /// <summary>
-        /// The log of this program: one line per entry, the time of day in
-        /// front of it, and the categories shortened.
+        /// The log of this program: one line per entry, in the columns of
+        /// <see cref="LogLineFormatter"/>.
         /// </summary>
-        /// <remarks>
-        /// A method of its own so that there is something to ask. Inside Main
-        /// the one thing worth holding on to - that what is handed to Hermod,
-        /// Ratatoskr and this application shortens its categories - could not
-        /// be read by any test, and a wrapper quietly dropped from a line in
-        /// the middle of a method this long is not something a log is compared
-        /// against afterwards.
-        ///
-        /// Shortened around the factory and not around the console, because
-        /// the console formatter prints the category it is handed and has no
-        /// say over it; see <see cref="LogCategories"/>.
-        /// </remarks>
         /// <param name="Verbose">Whether everything down to Trace is wanted.</param>
         internal static ILoggerFactory ConsoleLog(Boolean Verbose)
 
-            => new ShortLogCategories(
+            => LoggerFactory.Create(builder => ConsoleLines(builder, Verbose));
 
-                   LoggerFactory.Create(builder => {
+        #endregion
 
-                       builder.AddSimpleConsole(options => {
-                           options.SingleLine       = true;
-                           options.TimestampFormat  = "HH:mm:ss ";
-                       });
+        #region (internal) ConsoleLines(Builder, Verbose)
 
-                       builder.SetMinimumLevel(Verbose ? LogLevel.Trace : LogLevel.Information);
+        /// <summary>
+        /// The arrangement behind that log: the stock console provider, told
+        /// to write its lines with a formatter of ours.
+        /// </summary>
+        /// <remarks>
+        /// Apart from <see cref="ConsoleLog(Boolean)"/> so that there is
+        /// something to ask. A factory, once built, says nothing about itself
+        /// from outside, and which formatter the console was given is exactly
+        /// what no running log can be asked about - while a line of wiring
+        /// quietly changed in the middle of a method this long is not
+        /// something a log is compared against afterwards.
+        ///
+        /// The timestamp carries no trailing space, unlike the stock
+        /// formatter's: the columns are laid out by whoever writes them, not
+        /// by a format string.
+        /// </remarks>
+        /// <param name="Builder">The logging builder to arrange.</param>
+        /// <param name="Verbose">Whether everything down to Trace is wanted.</param>
+        internal static ILoggingBuilder ConsoleLines(ILoggingBuilder  Builder,
+                                                     Boolean          Verbose)
+        {
 
-                   })
+            Builder.AddConsole(options => options.FormatterName = LogLineFormatter.FormatterName);
 
-               );
+            Builder.AddConsoleFormatter<LogLineFormatter, LogLineFormatterOptions>(options => {
+                options.TimestampFormat = "HH:mm:ss";
+            });
+
+            Builder.SetMinimumLevel(Verbose ? LogLevel.Trace : LogLevel.Information);
+
+            return Builder;
+
+        }
 
         #endregion
 

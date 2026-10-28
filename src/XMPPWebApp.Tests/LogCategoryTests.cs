@@ -37,6 +37,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
     /// shortened are the names that actually arrive. The last test asks the
     /// type itself rather than a string literal, so a renamed namespace shows
     /// up here instead of in a log nobody compares.
+    ///
+    /// Where the rule is applied - in the line being written, and nowhere
+    /// before it - is LogLineTests.
     /// </remarks>
     [TestFixture]
     public class LogCategoryTests
@@ -99,51 +102,35 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
-        #region WhatTheFactoryHandsOn_IsTheShortName()
+        #region WhatTheFactoryBuilds_IsWhatTheRuleIsGiven()
 
         [Test]
-        public void WhatTheFactoryHandsOn_IsTheShortName()
+        public void WhatTheFactoryBuilds_IsWhatTheRuleIsGiven()
         {
 
             var asked = new List<String>();
 
-            using (var loggerFactory = new ShortLogCategories(
-                                           LoggerFactory.Create(builder => builder.AddProvider(new WhatWasAskedFor(asked)))))
+            using (var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(new WhatWasAskedFor(asked))))
             {
 
                 // The type and not its name in quotation marks: this is the
-                // category Microsoft.Extensions.Logging builds, which is the
-                // one the rule has to fit.
+                // category Microsoft.Extensions.Logging builds out of it, and
+                // the one the rule has to fit.
                 loggerFactory.CreateLogger<XMPPWebAPI>();
-
-                loggerFactory.CreateLogger("org.GraphDefined.Vanaheimr.Ratatoskr.XMPPConnection");
 
             }
 
-            Assert.That(asked, Is.EqualTo(new[] {
-                                   "XMPPWebApp.XMPPWebAPI",
-                                   "Ratatoskr.XMPPConnection"
-                               }));
+            Assert.Multiple(() =>
+            {
 
-        }
+                Assert.That(asked,
+                            Is.EqualTo(new[] { "org.GraphDefined.Vanaheimr.XMPPWebApp.XMPPWebAPI" }),
+                            "a logger keeps the name of its type; only the line is shortened");
 
-        #endregion
+                Assert.That(LogCategories.Shorten(asked[0]),
+                            Is.EqualTo("XMPPWebApp.XMPPWebAPI"));
 
-
-        #region TheLogOfThisProgram_ShortensItsCategories()
-
-        [Test]
-        public void TheLogOfThisProgram_ShortensItsCategories()
-        {
-
-            using var loggerFactory = Program.ConsoleLog(false);
-
-            // All a composed factory answers about itself from outside. It is
-            // worth asking anyway: this console is the whole reason the rule
-            // above exists, and a factory handed to Hermod, Ratatoskr and this
-            // application without the wrapper would print the full names again
-            // without anything failing.
-            Assert.That(loggerFactory, Is.InstanceOf<ShortLogCategories>());
+            });
 
         }
 

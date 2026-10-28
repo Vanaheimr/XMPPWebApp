@@ -23,7 +23,8 @@
     <!--
       The XMPP client logs through Microsoft.Extensions.Logging; unlike the
       console there is no input line to protect here, so the stock console
-      logger is enough.
+      provider carries the log - with a formatter of our own on it, see
+      LogLineFormatter.
     -->
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.14" />

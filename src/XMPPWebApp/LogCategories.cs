@@ -15,12 +15,6 @@
  * limitations under the License.
  */
 
-#region Usings
-
-using Microsoft.Extensions.Logging;
-
-#endregion
-
 namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 {
 
@@ -35,12 +29,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
     /// is which of the three products is speaking and which class in it, so
     /// that is what is kept: "Ratatoskr.XMPPConnection".
     ///
-    /// Shortened where the loggers are made and not where they are printed,
-    /// because the console formatter writes the category it is handed and has
-    /// no say over it; one of our own would mean writing the level, the
-    /// colours and the scopes again for this one detail. Nothing else here
-    /// reads a category - no AddFilter names one - so no filter can miss its
-    /// name afterwards.
+    /// Shortened where the line is written and not where the loggers are
+    /// made, which is to say by <see cref="LogLineFormatter"/>: a logger
+    /// keeps the name of its type, every filter and every other sink sees
+    /// that name, and only the console of this program says it short. It was
+    /// a wrapper around the logger factory first, for as long as the stock
+    /// formatter was the one writing the lines and had no say over the
+    /// category it was handed.
     /// </remarks>
     public static class LogCategories
     {
@@ -92,37 +87,6 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         }
 
         #endregion
-
-    }
-
-
-    /// <summary>
-    /// A logger factory that puts every category through
-    /// <see cref="LogCategories.Shorten(String)"/> on the way in.
-    /// </summary>
-    /// <remarks>
-    /// Around the factory rather than inside each library: Hermod, Ratatoskr
-    /// and this application all name their loggers after their types, and how
-    /// that is presented is the business of whoever writes the console - which
-    /// is this program.
-    /// </remarks>
-    /// <param name="Inner">The factory doing the work. It is disposed with this one.</param>
-    public sealed class ShortLogCategories(ILoggerFactory Inner) : ILoggerFactory
-    {
-
-        public ILogger CreateLogger(String CategoryName)
-
-            => Inner.CreateLogger(LogCategories.Shorten(CategoryName));
-
-
-        public void AddProvider(ILoggerProvider Provider)
-
-            => Inner.AddProvider(Provider);
-
-
-        public void Dispose()
-
-            => Inner.Dispose();
 
     }
 
