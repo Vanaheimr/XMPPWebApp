@@ -1,0 +1,8 @@
+# Shell scripts keep LF in every working copy, Windows included. They are run
+# where there is a /bin/bash, and a CR at the end of a line is part of the word
+# before it there: the shebang line of a CRLF script makes bash look for an
+# interpreter whose name ends in a carriage return, and every other line answers
+# with "$'\r': command not found". The repository already held redo.sh that way
+# - LF in the commit, CRLF after a checkout on Windows, unrunnable the moment it
+# is copied to a machine that would run it.
+*.sh text eol=lf
