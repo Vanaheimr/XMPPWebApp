@@ -17,6 +17,7 @@
 
 #region Usings
 
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
@@ -105,6 +106,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         private readonly DateTimeOffset  startedAt           = DateTimeOffset.UtcNow;
         private readonly ILogger         logger;
         private readonly ILoggerFactory? loggerFactory;
+
+        /// <summary>
+        /// The conversations that have been told, once, that a message of
+        /// theirs went out unencrypted.
+        /// </summary>
+        /// <remarks>
+        /// Not in the <see cref="ChatStore"/> and not on disk: this is about
+        /// what has been said to whoever is looking at the page, not about
+        /// what a conversation is. A restart says it again, and should -
+        /// nobody saw the first one.
+        ///
+        /// <b>Nothing ever takes an address out again</b>, and the reason is
+        /// <see cref="HowToSend"/>: a conversation that has been encrypted
+        /// once is refused rather than written in the clear, so this sentence
+        /// can only ever belong to a conversation in which nothing has ever
+        /// travelled encrypted. Re-arming it after an encrypted message would
+        /// be a line reachable by nothing - except through a thousand further
+        /// messages, which is how long the store holds one before the
+        /// encrypted one it remembers falls out of it.
+        /// </remarks>
+        private readonly ConcurrentDictionary<String, Byte>
+                                         saidItWentInTheClear  = new();
 
         #endregion
 
@@ -2230,6 +2253,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     logger.LogInformation("OMEMO: {Jid} has no device that can read an encrypted message; sending in the clear", Jid);
 
                     messageId = await SendInTheClear();
+
+                    // After the sending and not before it: a line that did not
+                    // go out has not gone out in the clear either, and the
+                    // throw would be reported twice over.
+                    if (saidItWentInTheClear.TryAdd(Jid.Bare.ToString(), 0))
+                        PublishNotice("warning", InTheClearText(Jid, sent));
+
                     break;
 
                 }
@@ -2303,6 +2333,34 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                "unable to read an encrypted message - their server did not answer that question. A message " +
                "in the clear is exactly what somebody arranging this would be after, so it was not sent as " +
                "one. Try again in a moment, or turn encryption off for this conversation if you know why." +
+               (Sent?.Skipped.Count > 0
+                    ? $" ({Describe(Sent.Skipped)})"
+                    : "");
+
+        /// <summary>
+        /// What a message says that was meant to be encrypted and went out in
+        /// the clear instead.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not a refusal, so it names no way out.</b> This is the ordinary
+        /// case of writing to somebody who does no OMEMO, and most of the
+        /// world does no OMEMO. What it is for is that the sender knows it -
+        /// which is the one thing this program must never let them be wrong
+        /// about, and until now the only place it was said was a line in the
+        /// server's log.
+        ///
+        /// <b>Said once per run of them rather than once per message.</b> The
+        /// lock missing from the line says it for every single one, where it
+        /// stays and can be looked at afterwards; a toast per message is a
+        /// toast nobody reads, and this one disappears after a few seconds
+        /// like every other notice.
+        /// </remarks>
+        private static String InTheClearText(JID         Jid,
+                                             OmemoSent?  Sent)
+
+            => $"This message to {Jid} went out unencrypted: their server answered that they publish no " +
+               "OMEMO device, so there was nothing to encrypt it to. A line that travelled encrypted " +
+               "carries a lock - this one does not, and neither will the next ones while that stays true." +
                (Sent?.Skipped.Count > 0
                     ? $" ({Describe(Sent.Skipped)})"
                     : "");

@@ -936,6 +936,137 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region ALineInTheClear_SaysWhy_AndSaysItOnce()
+
+        /// <summary>
+        /// A message that was meant to be encrypted and went out unencrypted
+        /// says so on the page - once for the conversation, not once per
+        /// message.
+        /// </summary>
+        /// <remarks>
+        /// The decision itself is right and is tested next door: most of the
+        /// world does no OMEMO, and a program that refuses to write to them is
+        /// no use. What was missing is that anybody is told. Until now it
+        /// stood in the server's log, where whoever is typing never looks.
+        ///
+        /// The second half of the test is the part that would otherwise go
+        /// wrong by itself: a notice is a toast that disappears after a few
+        /// seconds, so one per message is a column of them nobody reads, and
+        /// the missing lock on each line is what carries the truth from the
+        /// second message onwards.
+        /// </remarks>
+        [Test]
+        public async Task ALineInTheClear_SaysWhy_AndSaysItOnce()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                // Connected, and no OMEMO: nothing to encrypt to, and the
+                // server says so rather than staying silent.
+                await alice.ConnectAsync();
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+                await Until(() => api.Client?.OmemoAnnounced == true,
+                            "the web app to announce its OMEMO device");
+
+                var to      = $"alice@{xmpp!.Domain}";
+
+                var first   = await Send(to, "In the clear, then.");
+                var second  = await Send(to, "And once more.");
+
+                var said    = await NoticesAbout("unencrypted", TimeSpan.FromSeconds(2));
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(first.Encrypted,  Is.False);
+                    Assert.That(second.Encrypted, Is.False);
+
+                    Assert.That(said, Has.Count.EqualTo(1),
+                                $"two messages in the clear, and the page was told {said.Count} times");
+
+                    Assert.That(said.FirstOrDefault()?.Value<String>("level"),
+                                Is.EqualTo("warning"),
+                                "a message that went out unencrypted is not an aside");
+
+                    Assert.That(said.FirstOrDefault()?.Value<String>("text") ?? "",
+                                Does.Contain(to),
+                                "the sentence does not say who it is about");
+
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        #endregion
+
+        #region TurningEncryptionOff_SaysNothing()
+
+        /// <summary>
+        /// What somebody chose themselves is not news.
+        /// </summary>
+        /// <remarks>
+        /// The sentence next door is for the message that was meant to go
+        /// encrypted and could not. Turning the switch off for a conversation
+        /// is the other thing entirely - a decision, made on the page, by the
+        /// person the notice would be shown to.
+        /// </remarks>
+        [Test]
+        public async Task TurningEncryptionOff_SaysNothing()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+
+                Assert.That(await alice.EnableOmemoAsync(), Is.True,
+                            "Alice could not switch OMEMO on.");
+
+                await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+                await Until(() => api.Client?.OmemoAnnounced == true,
+                            "the web app to announce its OMEMO device");
+
+                var peer = JID.Parse($"alice@{xmpp!.Domain}");
+
+                api.Chats.SetEncryption(peer, false);
+
+                var written = await Send(peer.ToString(), "Deliberately in the clear.");
+
+                var said    = await NoticesAbout("unencrypted", TimeSpan.FromSeconds(2));
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(written.Encrypted, Is.False);
+
+                    Assert.That(said, Is.Empty,
+                                "the page was told about a decision it made itself");
+
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        #endregion
+
         #region WritingToSomebodyWithoutOmemo_GoesOutInTheClear()
 
         /// <summary>
@@ -1391,7 +1522,42 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         }
 
+        /// <summary>
+        /// The notices published so far whose text carries the given word -
+        /// collected up to a deadline, because what is being measured is also
+        /// how many of them there are <b>not</b>.
+        /// </summary>
+        private async Task<List<JObject>> NoticesAbout(String Word, TimeSpan Window)
+        {
+
+            var found = new List<JObject>();
+
+            using var deadline = new CancellationTokenSource(Window);
+
+            try
+            {
+
+                await foreach (var published in api!.Events.GetAllEventsGreater("test", 0, deadline.Token))
+                {
+                    if (published.Subevent == "notice" &&
+                        (published.Data.Value<String>("text") ?? "").Contains(Word, StringComparison.Ordinal))
+                    {
+                        found.Add(published.Data);
+                    }
+                }
+
+            }
+            catch (OperationCanceledException)
+            {
+                // The deadline is the point: nothing more is coming.
+            }
+
+            return found;
+
+        }
+
         #region OnUnix_TheKeyStore_IsOwnerOnly()
+
 
         /// <summary>
         /// The one file in this program whose loss and whose theft are both
