@@ -763,6 +763,20 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // A deep link to somebody nobody has talked to yet opens the chat.
             Chats.Open(jid);
             Chats.MarkRead(jid);
+
+            // And the question an encrypted message to them would otherwise
+            // ask with somebody already waiting for it to go out: which
+            // devices they have. Asked here, where a conversation is being
+            // opened anyway, it is answered long before anybody has finished
+            // typing - and asked at all only once per quarter of an hour, see
+            // OmemoDeviceLists.
+            //
+            // Neither awaited nor reported: it is a head start and nothing
+            // more, and whatever it does not bring, the sending asks for
+            // itself.
+            if (Client is { IsConnected: true } client && client.OmemoEnabled)
+                _ = client.Connection.WarmOmemoDeviceListAsync(jid);
+
             Chats.TrySnapshot(jid, out var sequence, out var chat, out var messages);
 
             return Task.FromResult(
@@ -2186,7 +2200,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     if (sent.Readable)
                     {
 
-                        messageId  = sent.MessageId;
+                        // Readable and sent are one and the same since an
+                        // unreadable message stopped going out at all - see
+                        // the remark on OmemoSent.
+                        messageId  = sent.MessageId!;
 
                         // Known rather than New: a session with this device
                         // exists, because a message has just gone through it.

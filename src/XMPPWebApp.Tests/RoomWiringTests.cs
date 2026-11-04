@@ -84,6 +84,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
             xmpp.AddAccount("me");
 
+            // The occupant the room presences name. An account of her own
+            // because one test needs her to be somebody an encrypted line can
+            // be addressed to, and a device list is published by a client, not
+            // by a presence stanza.
+            xmpp.AddAccount("alice");
+
             web = await HTTPServer.StartNew(IPv4Address.Parse("127.0.0.1"));
 
             api = new XMPPWebAPI(
@@ -133,6 +139,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                     "pw",
                     xmpp.Uri.ToString(),
                     AllowInsecure: true);
+
+        private XMPPClient ClientFor(String LocalPart)
+
+            => new (new XMPPConnection(JID.Parse($"{LocalPart}@{xmpp!.Domain}"),
+                                       "pw",
+                                       xmpp.Uri));
 
         private static async Task Until(Func<Boolean> Condition, String What)
         {
@@ -1166,6 +1178,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             // trips before this device stands in the account's own list.
             await Until(() => api!.Client!.OmemoAnnounced,          "the web app to announce its OMEMO device");
             await Until(() => TheRoom()!.CannotEncrypt is null,     "the room to become one that can be encrypted in");
+
+            // Somebody in the room who could read it. The presence above gives
+            // Alice a real address, which is what the room requires - but an
+            // address publishes no devices, and a line nobody in the room has
+            // a device for is not sent at all any more. See
+            // OmemoRoomEndToEndTests.ARoomWhereNobodyCanRead_GetsNothing.
+            await using var alice = ClientFor("alice");
+
+            await alice.ConnectAsync();
+
+            Assert.That(await alice.EnableOmemoAsync(), Is.True,
+                        "Alice could not switch OMEMO on.");
 
             using var browser = await BrowserAsync();
 

@@ -17,11 +17,16 @@
 
 #region Usings
 
+using System.Net;
+using System.Text;
+
 using Newtonsoft.Json.Linq;
 
 using NUnit.Framework;
 
+using org.GraphDefined.Vanaheimr.Illias;
 using org.GraphDefined.Vanaheimr.Hermod;
+using org.GraphDefined.Vanaheimr.Hermod.Mail;
 using org.GraphDefined.Vanaheimr.Hermod.HTTP;
 using org.GraphDefined.Vanaheimr.Ratatoskr;
 using org.GraphDefined.Vanaheimr.Ratatoskr.Server;
@@ -162,6 +167,97 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
             => new (new XMPPConnection(JID.Parse($"{LocalPart}@{xmpp!.Domain}"),
                                        "pw",
                                        xmpp.Uri));
+
+        private const String WebUser      = "admin";
+        private const String WebPassword  = "correct-horse-battery-staple";
+
+        /// <summary>
+        /// A browser signed in to the web page, for the one thing that only
+        /// happens on a route: opening a conversation.
+        /// </summary>
+        private async Task<HttpClient> BrowserAsync()
+        {
+
+            Assert.That(await api!.CreateUserIfNotExists(
+                                   User_Id.Parse(WebUser),
+                                   I18NString.Create(WebUser),
+                                   SimpleEMailAddress.Parse($"{WebUser}@localhost"),
+                                   Password:                  WebPassword,
+                                   IsAuthenticated:           true,
+                                   SkipNewUserEMail:          true,
+                                   SkipNewUserNotifications:  true,
+                                   SkipDefaultNotifications:  true
+                               ),
+                        Is.Not.Null,
+                        "the account the browser signs in as");
+
+            var browser = new HttpClient(new HttpClientHandler {
+                                             CookieContainer    = new CookieContainer(),
+                                             UseCookies         = true,
+                                             AllowAutoRedirect  = false
+                                         }) {
+                              BaseAddress = new Uri($"http://127.0.0.1:{web!.TCPPort}/"),
+                              Timeout     = TimeSpan.FromSeconds(30)
+                          };
+
+            var signIn = await browser.PostAsync(
+                                   "api/auth/login",
+                                   new StringContent(
+                                       new JObject(new JProperty("login",    WebUser),
+                                                   new JProperty("password", WebPassword)).ToString(),
+                                       Encoding.UTF8,
+                                       "application/json"
+                                   )
+                               );
+
+            Assert.That(signIn.IsSuccessStatusCode, Is.True, "the sign-in");
+
+            return browser;
+
+        }
+
+        #endregion
+
+
+        #region OpeningAConversation_AsksForTheDeviceListInAdvance()
+
+        /// <summary>
+        /// Opening a chat asks who the other side's devices are - so that the
+        /// first encrypted message does not wait for the answer.
+        /// </summary>
+        /// <remarks>
+        /// The round trip is the same one the sending path would make. What
+        /// differs is who waits for it: a history being drawn, or somebody who
+        /// has pressed send and watches nothing happen for up to the IQ
+        /// timeout. Which answer comes back does not matter here - Alice does
+        /// no OMEMO in this test, and "publishes nothing" is an answer like
+        /// any other.
+        /// </remarks>
+        [Test]
+        public async Task OpeningAConversation_AsksForTheDeviceListInAdvance()
+        {
+
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+            await Until(() => api.Client?.OmemoAnnounced == true,
+                        "the web app to announce its OMEMO device");
+
+            var aliceJid = JID.Parse($"alice@{xmpp!.Domain}");
+
+            Assert.That(api.Client!.Connection.OmemoDeviceLists.Get(aliceJid), Is.Null,
+                        "nobody has asked about Alice yet, so this is the wrong state to measure");
+
+            using var browser = await BrowserAsync();
+
+            var opened = await browser.GetAsync($"api/v1/chats/{Uri.EscapeDataString(aliceJid.ToString())}/messages");
+
+            Assert.That(opened.StatusCode, Is.EqualTo(HttpStatusCode.OK),
+                        await opened.Content.ReadAsStringAsync());
+
+            await Until(() => api.Client.Connection.OmemoDeviceLists.Get(aliceJid) is not null,
+                        "Alice's device list to be asked for while the conversation opens");
+
+        }
 
         #endregion
 
