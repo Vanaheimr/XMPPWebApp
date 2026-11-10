@@ -2767,10 +2767,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         private Task<HTTPResponse> StreamEvents(HTTPRequest Request)
         {
 
-            if (!TryGetSession(Request, out var session, out var unauthorized))
+            if (!TryGetSession(Request, out _, out var unauthorized))
                 return Task.FromResult(unauthorized);
 
-            var token    = session.Token;
+            // Out of the cookie, and not off the session: a session keeps
+            // the hash of its token and nothing else, so Session.Token is
+            // empty on everything but the object the sign-in was handed.
+            // See StillLive. The line above has just found this session by
+            // this very cookie, so it is there; an empty token here would
+            // end the stream at its first event rather than open it to
+            // anybody, which is the right way round.
+            var token    = TryGetSecurityTokenFromCookie(Request, out var fromCookie)
+                               ? fromCookie
+                               : default;
             var clientId = Request.RemoteSocket.ToString();
 
             return Task.FromResult(
@@ -3049,24 +3058,21 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// that checked itself that way would renew its own session for every
         /// event, and "twelve hours unused" would quietly become "twelve hours
         /// after the browser was closed".
+        ///
+        /// <b>TryPeek is that lookup, and it is Hermod's.</b> This read its way
+        /// through the sessions itself for as long as a session carried the
+        /// token it was found by. It does not any more: the store keeps the
+        /// SHA-256 of the token and nothing else, so that whoever reads the
+        /// sessions - or their file - cannot sign in with what is there, and
+        /// Session.Token is filled on exactly one object, the one handed back
+        /// to the sign-in that is about to put it into a cookie. Comparing it
+        /// here therefore compared against nothing: every event found its
+        /// session gone and every stream closed after its first one, which is
+        /// what two tests of this file reported the moment the submodule moved.
         /// </remarks>
         private Boolean StillLive(SecurityToken_Id Token)
-        {
 
-            if (Token.IsNullOrEmpty)
-                return false;
-
-            var now = Sessions.TimeProvider.GetUtcNow();
-
-            foreach (var session in Sessions)
-            {
-                if (session.Token == Token)
-                    return !session.IsExpired(now);
-            }
-
-            return false;
-
-        }
+            => Sessions.TryPeek(Token, out _);
 
         #endregion
 
