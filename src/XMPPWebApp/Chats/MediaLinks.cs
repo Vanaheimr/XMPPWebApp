@@ -45,15 +45,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// inside a sentence is a different act: somebody is pointing at something,
     /// not handing it over.
     ///
-    /// <b>And only when the sender said it is a file, or the address names a
-    /// kind of file this archive keeps.</b> Without this one the two rules
-    /// above read a pasted link as a handed-over file whenever it stands alone
-    /// in its line, which is how people paste links: a bare
+    /// <b>And - unless <see cref="MediaPrefetch"/> says otherwise - only when
+    /// the sender said it is a file, or the address names a kind of file this
+    /// archive keeps.</b> Without that one the two rules above read a pasted
+    /// link as a handed-over file whenever it stands alone in its line, which
+    /// is how people paste links: a bare
     /// <c>https://www.youtube.com/shorts/...</c> was fetched in full, found to
     /// be <c>text/html</c>, and thrown away again. The throwing away was never
     /// the point. <b>The request itself is what tells a stranger that the
     /// message arrived, and from which address</b> - before the reader has so
     /// much as looked at it.
+    ///
+    /// <b>It also read too little.</b> Plenty of upload services name the file
+    /// nowhere in the address, and a client that leaves the XEP-0066 element
+    /// out leaves nothing else to go by: a Trillian share answers
+    /// <c>image/jpeg</c> for <c>https://trillian.media/media/?q=2vhTXC...</c>
+    /// and says so in no other way, so a picture somebody sent showed up as a
+    /// line of letters. Both halves are real, they point in opposite
+    /// directions, and which of them is worse is not a thing this file can
+    /// know - so the trial fetch of a link that is a whole message is a
+    /// setting, by default allowed for a contact in the roster with a
+    /// conversation here and refused for everybody else. See
+    /// <see cref="MediaPrefetch"/> for what each value costs.
     ///
     /// Said it, in the one way the protocol has of saying it: the
     /// <c>&lt;x xmlns='jabber:x:oob'/&gt;</c> of XEP-0066, which a client
@@ -169,8 +182,29 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// or null when they declared none - which is every pasted link, and
         /// every client that leaves the element out.
         /// </param>
-        public static Uri? Detect(String? Body, Uri? Declared = null)
+        /// <param name="Body">The body of the message.</param>
+        /// <param name="Declared">The XEP-0066 address beside it, where the sender wrote one.</param>
+        /// <param name="Prefetch">Which messages may be asked about at all.</param>
+        /// <param name="FromAKnownContact">
+        /// Whether this conversation is with a contact in the roster - which is
+        /// what <see cref="MediaPrefetch.RosterChats"/> turns on.
+        /// </param>
+        /// <remarks>
+        /// The two last ones default to the cautious answer rather than to the
+        /// convenient one: a caller that says nothing gets the rule as it
+        /// stands for a stranger.
+        /// </remarks>
+        public static Uri? Detect(String?        Body,
+                                  Uri?           Declared           = null,
+                                  MediaPrefetch  Prefetch           = MediaPrefetch.RosterChats,
+                                  Boolean        FromAKnownContact  = false)
         {
+
+            // Nothing is asked for at all, and that includes what the sender
+            // declared: the request is the thing being refused here, not the
+            // guesswork about what lies at the other end.
+            if (Prefetch == MediaPrefetch.Never)
+                return null;
 
             if (Body is null)
                 return null;
@@ -220,7 +254,16 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 // to make more public than the sender did - which is a decision
                 // about this side and therefore not the sender's to make.
                 if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) &&
-                    (WasDeclared(Declared, uri) || NamesAKeptFile(uri)))
+
+                    // The sender said it, or the address says it.
+                    (WasDeclared(Declared, uri)                                 ||
+                     NamesAKeptFile(uri)                                        ||
+
+                     // Or nobody said it and this side was told to go and ask
+                     // anyway - of everyone, or of the people already written
+                     // to.
+                     Prefetch == MediaPrefetch.Always                           ||
+                     (Prefetch == MediaPrefetch.RosterChats && FromAKnownContact)))
                 {
                     return uri;
                 }

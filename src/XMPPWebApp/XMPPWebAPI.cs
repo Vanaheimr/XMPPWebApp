@@ -324,7 +324,17 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // constructor shadow the properties, and one of them may be null
             // where the property never is.
             if (this.Archive is not null)
+            {
+
                 this.Archive.OnMediaStored += (chat, messageId, media) => this.Chats.AttachMedia(chat, messageId, media);
+
+                // Who answers the one question MediaPrefetch.RosterChats asks.
+                // The store is asked at the moment of the fetch rather than
+                // read once: a contact added this afternoon is a known contact
+                // this afternoon, and one removed is not.
+                this.Archive.IsAKnownContact = this.Chats.IsAKnownContact;
+
+            }
 
             if (Settings is not null)
             {

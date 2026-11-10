@@ -74,6 +74,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             String?  originArgument     = null;
             String?  archiveDirectory   = null;
             var      keepArchive        = true;
+            var      prefetch           = MediaPrefetch.RosterChats;
             var      useOmemo           = true;
             var      keepMedia          = true;
             var      historyDays        = ChatArchive.DefaultHistoryWindow.TotalDays;
@@ -173,6 +174,25 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                     case "--no-media":
                         keepMedia = false;
+                        break;
+
+                    case "--prefetch":
+                        if (i + 1 < Arguments.Length &&
+                            Arguments[i + 1] switch {
+                                "all"     => (MediaPrefetch?) MediaPrefetch.Always,
+                                "roster"  => MediaPrefetch.RosterChats,
+                                "never"   => MediaPrefetch.Never,
+                                _         => null
+                            } is MediaPrefetch parsedPrefetch)
+                        {
+                            prefetch = parsedPrefetch;
+                            i++;
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine("Say which messages: --prefetch all | roster | never");
+                            return 2;
+                        }
                         break;
 
                     case "--no-omemo":
@@ -423,6 +443,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     Console.Error.WriteLine("Give another directory with --archive, or run with --no-archive.");
                     return 1;
                 }
+
+                // Which messages this side goes and asks about. Set here and
+                // not handed to the constructor: it is a setting, and the one
+                // thing a setting has to be able to do is change.
+                archive.Prefetch = prefetch;
             }
 
             #endregion
@@ -855,7 +880,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         {
             Console.WriteLine("Usage: XMPPWebApp [--port <number>] [--any] [--dev [<dist directory>]]");
             Console.WriteLine("                  [--https | --cert <file.pfx> | --cert-pem <file> [--key-pem <file>]]");
-            Console.WriteLine("                  [--archive <dir> | --no-archive] [--no-media] [--history-days <n>] [--no-omemo]");
+            Console.WriteLine("                  [--archive <dir> | --no-archive] [--no-media] [--prefetch <what>] [--history-days <n>] [--no-omemo]");
             Console.WriteLine("                  [--account <file>] [--jid <jid> --password <pw> [--ws <uri>]] [--insecure]");
             Console.WriteLine("                  [--sasl <mechanism>] [--trust-announcement] [--verbose]");
             Console.WriteLine();
@@ -880,6 +905,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             Console.WriteLine("                    one file per month, and the shared files beside them in media/");
             Console.WriteLine("  --no-archive      keep nothing; what is said is gone when the process is");
             Console.WriteLine("  --no-media        write the conversations, but do not fetch the files shared in them");
+            Console.WriteLine("  --prefetch <what> which messages a file is fetched for before anybody asks to see it:");
+            Console.WriteLine("                    all    - every message that is nothing but one https address");
+            Console.WriteLine("                    roster - those, from a contact in the roster, and declared files (default)");
+            Console.WriteLine("                    never  - nothing, not even a file the sender declared");
             Console.WriteLine($"  --history-days <n>  how much of the archive is loaded at a start (default: {ChatArchive.DefaultHistoryWindow.TotalDays:0});");
             Console.WriteLine("                      older messages are loaded when the page is scrolled up to them");
             Console.WriteLine();

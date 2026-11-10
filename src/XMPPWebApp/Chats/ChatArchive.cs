@@ -219,6 +219,30 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             => media is not null;
 
         /// <summary>
+        /// Which messages a file is fetched for before anybody asked to see
+        /// it. See <see cref="MediaPrefetch"/>; the default is the middle one.
+        /// </summary>
+        /// <remarks>
+        /// Settable while this runs, because it is a setting and not a shape:
+        /// whoever turns it down wants it down now and not after a restart.
+        /// </remarks>
+        public MediaPrefetch  Prefetch   { get; set; } = MediaPrefetch.RosterChats;
+
+        /// <summary>
+        /// Whether a conversation is with a contact in the roster - what
+        /// <see cref="MediaPrefetch.RosterChats"/> asks, answered by whoever
+        /// keeps the roster.
+        /// </summary>
+        /// <remarks>
+        /// A delegate rather than a reference to the store: an archive writes
+        /// files and knows nothing of rosters, and the one question it has to
+        /// ask is smaller than an acquaintance with the thing that answers it.
+        /// Unset means no - an archive nobody told is an archive that does not
+        /// go asking strangers' servers.
+        /// </remarks>
+        public Func<JID, Boolean>?  IsAKnownContact   { get; set; }
+
+        /// <summary>
         /// How many writes have failed after the first one, which was reported.
         /// </summary>
         public Int64     SuppressedProblems
@@ -841,8 +865,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                 return;
             }
 
-            if (MediaLinks.Detect(Message.Body, Message.Declared) is not Uri url)
+            if (MediaLinks.Detect(Message.Body,
+                                  Message.Declared,
+                                  Prefetch,
+                                  IsAKnownContact?.Invoke(Message.Chat) == true) is not Uri url)
+            {
                 return;
+            }
 
             lock (@lock)
             {

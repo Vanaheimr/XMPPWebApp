@@ -47,6 +47,51 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         private static readonly JID             bob    = JID.Parse("bob@example.org");
         private static readonly DateTimeOffset  noon   = new (2026, 9, 12, 12, 0, 0, TimeSpan.Zero);
 
+        #region AContactInTheRoster_IsAKnownContact()
+
+        /// <summary>
+        /// Who counts as somebody this side has a standing relationship with.
+        /// </summary>
+        /// <remarks>
+        /// The question <see cref="MediaPrefetch.RosterChats"/> asks before a
+        /// link that is a whole message is fetched - so a wrong answer here is
+        /// either a picture that stays a line of letters, or a request to a
+        /// stranger's server that says a message arrived.
+        /// </remarks>
+        [Test]
+        public void AContactInTheRoster_IsAKnownContact()
+        {
+
+            var store    = new ChatStore();
+
+            var alice    = JID.Parse("alice@example.org");
+            var stranger = JID.Parse("nobody@example.net");
+
+            store.SetContact(alice, "Alice", SubscriptionState.Both);
+
+            // A word from somebody who is in nobody's roster.
+            store.AddIncoming(stranger, stranger.ToString(), "m1", "Hello?", DateTimeOffset.UtcNow);
+
+            Assert.Multiple(() => {
+
+                Assert.That(store.IsAKnownContact(alice), Is.True,
+                            "a roster contact, whose conversation the roster itself created");
+
+                Assert.That(store.IsAKnownContact(JID.Parse("alice@example.org/phone")), Is.True,
+                            "a resource is no part of the question");
+
+                Assert.That(store.IsAKnownContact(stranger), Is.False,
+                            "somebody who has written once is not a contact");
+
+                Assert.That(store.IsAKnownContact(JID.Parse("never-heard-of@example.net")), Is.False,
+                            "and an address with no conversation at all is not either");
+
+            });
+
+        }
+
+        #endregion
+
         #region AnIncomingMessage_OpensTheChatAndCountsAsUnread()
 
         [Test]

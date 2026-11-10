@@ -63,6 +63,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         /// of their own - that is the normal way to paste one - so "the body is
         /// nothing but a URL" does not tell a file from a link, and was the
         /// whole of the rule.
+        ///
+        /// <b>This is the stranger's case now</b>, which is what the arguments
+        /// left out say: <see cref="MediaPrefetch.RosterChats"/> and a sender
+        /// nobody here has written to. From a contact in the roster the same
+        /// bodies are tried - see the test below, and
+        /// <see cref="MediaPrefetch"/> for why the two are not the same
+        /// question.
         /// </remarks>
         [Test]
         public void APastedLink_IsNotFetched()
@@ -85,6 +92,164 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
                 Assert.That(MediaLinks.Detect("https://example.org/download.php?id=7"),
                             Is.Null,
                             "a script is not a kind of file this archive keeps");
+
+            });
+
+        }
+
+        #endregion
+
+        #region APictureNobodyNamed_IsTriedForAContactAndNotForAStranger()
+
+        /// <summary>
+        /// The address that brought the setting about: a share that answers
+        /// image/jpeg and says so nowhere in its name.
+        /// </summary>
+        /// <remarks>
+        /// Measured rather than supposed - a HEAD on this very address answers
+        /// <c>Content-Type: image/jpeg</c>, 224407 bytes, and names the file in
+        /// a header of its own (<c>Trillian-Media-Name</c>). The path is
+        /// <c>/media/</c> and the name lives in a query string, so both of the
+        /// signals this file reads say nothing, and the picture showed up as a
+        /// line of letters.
+        ///
+        /// Which is the whole of the trade: asking is the only way to find out,
+        /// and the asking tells a stranger's server that the message arrived.
+        /// So the two halves are separated by the one thing this side knows -
+        /// whether the sender is somebody already written to.
+        /// </remarks>
+        [Test]
+        public void APictureNobodyNamed_IsTriedForAContactAndNotForAStranger()
+        {
+
+            const String share = "https://trillian.media/media/?q=2vhTXC7WaTVYmSPojKyHq5RByFa5UVbjPCp495Zc4RjZpvHfxzSJCvyZ1M2nF3BdBLcHMww61";
+
+            Assert.Multiple(() => {
+
+                Assert.That(MediaLinks.Detect(share, null, MediaPrefetch.RosterChats, FromAKnownContact: true)?.Host,
+                            Is.EqualTo("trillian.media"),
+                            "a picture from a contact in the roster stays a line of letters");
+
+                Assert.That(MediaLinks.Detect(share, null, MediaPrefetch.RosterChats, FromAKnownContact: false),
+                            Is.Null,
+                            "and a stranger gets a request out of this side all the same");
+
+                Assert.That(MediaLinks.Detect(share, null, MediaPrefetch.Always, FromAKnownContact: false)?.Host,
+                            Is.EqualTo("trillian.media"),
+                            "Always is the value for whoever wants exactly that");
+
+                Assert.That(MediaLinks.Detect(share, null, MediaPrefetch.Never, FromAKnownContact: true),
+                            Is.Null);
+
+            });
+
+        }
+
+        #endregion
+
+        #region TheDefault_IsTheCautiousOne()
+
+        /// <summary>
+        /// What a caller gets who says nothing about the setting.
+        /// </summary>
+        /// <remarks>
+        /// Two defaults in one signature, and both of them refuse: a caller
+        /// that has not been taught about rosters does not go asking
+        /// strangers' servers because it forgot an argument.
+        /// </remarks>
+        [Test]
+        public void TheDefault_IsTheCautiousOne()
+        {
+
+            const String share = "https://trillian.media/media/?q=2vhTXC7WaTVYmSPojKyHq5RByFa5UVbjPCp495Zc4RjZpvHfxzSJCvyZ1M2nF3BdBLcHMww61";
+
+            Assert.Multiple(() => {
+
+                Assert.That(MediaLinks.Detect(share),
+                            Is.Null,
+                            "the defaults fetched a stranger's address");
+
+                Assert.That(MediaLinks.Detect("https://upload.example.org/a1b2/IMG_1234.jpg")?.AbsolutePath,
+                            Is.EqualTo("/a1b2/IMG_1234.jpg"),
+                            "and a named file is still fetched without anybody saying anything");
+
+            });
+
+        }
+
+        #endregion
+
+        #region Never_AsksForNothingAtAll()
+
+        /// <summary>
+        /// Never is not "no guessing": it is no request, and that includes the
+        /// file the sender declared.
+        /// </summary>
+        /// <remarks>
+        /// The price of it, named here so that it cannot be a surprise: a file
+        /// handed over per XEP-0363 stays a link, and one shared per XEP-0454
+        /// cannot be seen at all, because no browser opens an aesgcm address.
+        /// What is bought is that an arriving message causes no traffic
+        /// whatsoever.
+        /// </remarks>
+        [Test]
+        public void Never_AsksForNothingAtAll()
+        {
+
+            Assert.Multiple(() => {
+
+                Assert.That(MediaLinks.Detect("aesgcm://upload.example.org/a1b2/IMG_1234.jpg#0123456789abcdef",
+                                              null, MediaPrefetch.Never, FromAKnownContact: true),
+                            Is.Null,
+                            "an encrypted share is a file and is still not asked for");
+
+                Assert.That(MediaLinks.Detect("https://upload.example.org/a1b2/IMG_1234.jpg",
+                                              null, MediaPrefetch.Never, FromAKnownContact: true),
+                            Is.Null,
+                            "nor is one whose name says what it is");
+
+                Assert.That(MediaLinks.Detect("https://upload.example.org/a1b2/x",
+                                              new Uri("https://upload.example.org/a1b2/x"),
+                                              MediaPrefetch.Never, FromAKnownContact: true),
+                            Is.Null,
+                            "nor one the sender declared per XEP-0066");
+
+            });
+
+        }
+
+        #endregion
+
+        #region ALinkInASentence_IsTriedUnderNoSetting()
+
+        /// <summary>
+        /// The one line none of the three values crosses.
+        /// </summary>
+        /// <remarks>
+        /// A link inside a sentence is somebody pointing at something. The
+        /// setting widens what counts as handing a file over; it does not
+        /// touch what counts as a sentence.
+        /// </remarks>
+        [Test]
+        public void ALinkInASentence_IsTriedUnderNoSetting()
+        {
+
+            Assert.Multiple(() => {
+
+                foreach (var setting in new[] { MediaPrefetch.Never, MediaPrefetch.RosterChats, MediaPrefetch.Always })
+                {
+
+                    Assert.That(MediaLinks.Detect("look at this https://trillian.media/media/?q=2vhTXC7 and tell me",
+                                                  null, setting, FromAKnownContact: true),
+                                Is.Null,
+                                setting.ToString());
+
+                    Assert.That(MediaLinks.Detect("https://example.org/a https://example.org/b",
+                                                  null, setting, FromAKnownContact: true),
+                                Is.Null,
+                                $"two addresses, {setting}");
+
+                }
 
             });
 

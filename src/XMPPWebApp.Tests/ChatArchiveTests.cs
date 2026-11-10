@@ -124,6 +124,52 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
         #endregion
 
 
+        #region TheArchive_AsksWhoTheContactIs_AndNeverAsksTheNetwork()
+
+        /// <summary>
+        /// A link that is a whole message: the archive asks whoever keeps the
+        /// roster whether this is a contact, and with
+        /// <see cref="MediaPrefetch.Never"/> it asks nothing of anybody else.
+        /// </summary>
+        /// <remarks>
+        /// <b>With the media store on, which nothing else in this file does.</b>
+        /// That is the only way to reach the decision at all - an archive
+        /// without the store lets every address go before the question is put -
+        /// and Never is what keeps the promise at the top of this file that
+        /// nothing here reaches the network: the one address below would
+        /// otherwise be fetched for real.
+        /// </remarks>
+        [Test]
+        public async Task TheArchive_AsksWhoTheContactIs_AndNeverAsksTheNetwork()
+        {
+
+            var asked = new List<JID>();
+
+            await using var archive = Open(KeepMedia: true);
+
+            archive.Prefetch         = MediaPrefetch.Never;
+            archive.IsAKnownContact  = jid => { asked.Add(jid); return true; };
+
+            archive.Record(Incoming(alice, "m1",
+                                    "https://trillian.media/media/?q=2vhTXC7WaTVYmSPojKyHq5RByFa5UVbjPCp495Zc4RjZpvHfxzSJCvyZ1M2nF3BdBLcHMww61",
+                                    new DateTimeOffset(2026, 11, 10, 12, 0, 0, TimeSpan.Zero)));
+
+            await archive.FlushAsync();
+
+            Assert.Multiple(() => {
+
+                Assert.That(asked, Is.EqualTo(new[] { alice }),
+                            "the archive did not ask who this conversation is with");
+
+                Assert.That(archive.PendingFetches, Is.Zero,
+                            "something was fetched although nothing was to be asked for");
+
+            });
+
+        }
+
+        #endregion
+
         #region Search_FindsTheLineAcrossMonthsAndNewestFirst()
 
         /// <summary>

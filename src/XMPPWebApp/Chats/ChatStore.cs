@@ -745,6 +745,39 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
 
         #endregion
 
+        #region IsAKnownContact(Chat)
+
+        /// <summary>
+        /// Whether there is a conversation with this address and the address
+        /// is a contact in the roster.
+        /// </summary>
+        /// <remarks>
+        /// What this answers is <see cref="MediaPrefetch.RosterChats"/>: does
+        /// this side have a standing relationship with the sender, or has it
+        /// merely heard from them once.
+        ///
+        /// <b>In practice that is the roster alone.</b> SetContact creates the
+        /// conversation for every roster item that arrives, so a contact who
+        /// has never written still has a row here - which is right for the
+        /// question, because a subscription is the standing relationship. The
+        /// conversation half is what keeps an address nobody ever heard of
+        /// from passing, and it is cheap.
+        ///
+        /// <b>Before the roster has arrived nobody is a contact.</b> A message
+        /// landing in the seconds between the connection and the roster is
+        /// treated as a stranger's, which means a picture of theirs waits for
+        /// the next one. That is the right way round, and it mends itself.
+        /// </remarks>
+        /// <param name="Chat">The conversation, i.e. the far end.</param>
+        public Boolean IsAKnownContact(JID Chat)
+        {
+            lock (@lock)
+                return chats.TryGetValue(Chat.Bare, out var conversation) &&
+                       conversation.InRoster;
+        }
+
+        #endregion
+
         #region LoadHistory(Chat, Messages)
 
         /// <summary>
