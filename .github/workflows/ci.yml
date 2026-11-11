@@ -88,7 +88,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
 
       # package.json asks for Node >= 22 and the apt package is older than that,
       # so this cannot come out of the container's own repositories.

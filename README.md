@@ -241,7 +241,7 @@ the library speaks is in the
 
 ## Requirements
 
-- **.NET SDK 10.0** or newer
+- **.NET SDK 11.0** or newer
 - **Node.js 22** or newer with npm, for the frontend bundle
 - An XMPP account on a server that offers **XMPP over WebSocket** (RFC 7395)
 
@@ -792,7 +792,7 @@ submodule bump has work in it.
 
 ```
 XMPPWebApp.slnx
-src/XMPPWebApp/                  the C# process (net10.0)
+src/XMPPWebApp/                  the C# process (net11.0)
     Program.cs                   arguments, HTTP server, account file, the first account
     XMPPWebAPI.cs                the JSON API and the event stream, on Hermod's HTTPExtAPI
     XMPPWebAPI.XMPP.cs           the account, the client made from it, which XMPP events end up where
