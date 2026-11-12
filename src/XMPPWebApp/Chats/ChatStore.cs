@@ -64,6 +64,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             public Int32               Unread           { get; set; }
             public DateTimeOffset?     LastActivity     { get; set; }
             public Boolean             EncryptionOn     { get; set; } = true;
+            public Boolean             NoOmemoThere     { get; set; }
             public String?             Avatar           { get; set; }
             public List<ChatMessage>   Messages         { get; }      = [];
 
@@ -93,7 +94,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                         Messages.Count > 0 ? Messages[^1] : null,
                         LastActivity,
                         EncryptionOn,
-                        Avatar);
+                        Avatar,
+                        NoOmemoThere);
 
         }
 
@@ -114,6 +116,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         /// message turns up in it.
         /// </remarks>
         private readonly HashSet<JID>                   plaintext  = [];
+        private readonly HashSet<JID>                   noOmemo    = [];
 
         private readonly Lock                           @lock  = new();
         private          Int64                          sequence;
@@ -728,6 +731,64 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
         }
 
         /// <summary>
+        /// Notes that the far end of this conversation publishes no OMEMO
+        /// device, or takes the note away again.
+        /// </summary>
+        /// <remarks>
+        /// <b>Not a switch, and kept apart from the one above for that
+        /// reason.</b> Off is what somebody decided; this is what a server
+        /// answered. The first outranks everything and stays until somebody
+        /// changes it. The second is given up the moment anything says
+        /// otherwise - a device list that shows up, an encrypted line that
+        /// comes in - and it never outranks a conversation that has been
+        /// encrypted before.
+        /// </remarks>
+        /// <returns>Whether that changed anything.</returns>
+        public Boolean SetNoOmemoThere(JID      Chat,
+                                       Boolean  NoOmemoThere)
+        {
+            lock (@lock)
+            {
+
+                if (!(NoOmemoThere
+                          ? noOmemo.Add   (Chat.Bare)
+                          : noOmemo.Remove(Chat.Bare)))
+                {
+                    return false;
+                }
+
+                if (chats.TryGetValue(Chat.Bare, out var conversation))
+                {
+                    conversation.NoOmemoThere = NoOmemoThere;
+                    Changed(conversation);
+                }
+
+                return true;
+
+            }
+        }
+
+        /// <summary>
+        /// Whether the far end of this conversation is noted as publishing no
+        /// OMEMO device.
+        /// </summary>
+        public Boolean NoOmemoThere(JID Chat)
+        {
+            lock (@lock)
+                return noOmemo.Contains(Chat.Bare);
+        }
+
+        /// <summary>
+        /// The conversations whose far end is noted as publishing no OMEMO
+        /// device.
+        /// </summary>
+        public IReadOnlyCollection<JID> NoOmemoConversations()
+        {
+            lock (@lock)
+                return [.. noOmemo];
+        }
+
+        /// <summary>
         /// Whether anything in this conversation ever travelled encrypted.
         /// </summary>
         /// <remarks>
@@ -1097,7 +1158,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
             {
 
                 conversation = new Conversation(BareJid) {
-                                   EncryptionOn = !plaintext.Contains(BareJid)
+                                   EncryptionOn = !plaintext.Contains(BareJid),
+                                   NoOmemoThere = noOmemo.Contains(BareJid)
                                };
 
                 chats.Add(BareJid, conversation);

@@ -650,6 +650,13 @@ input, textarea, select {
             border-color:  $color-error;
         }
 
+        // Open as well, and not red: nobody turned this off. It is what the
+        // far end answered, and it mends itself.
+        .encryption.unsupported {
+            color:         $color-warn;
+            border-color:  $color-warn;
+        }
+
     }
 
 }

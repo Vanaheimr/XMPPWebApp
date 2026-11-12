@@ -450,6 +450,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             client.OnEncryptedMessage    += (timestamp, sender, message, omemo, ct) => { if (Mine(sender)) HandleEncrypted(message, omemo); return Task.CompletedTask; };
             client.OnRawXml              += (timestamp, sender, xml,      ct) => { if (Mine(sender)) HandleRawXml(xml);            return Task.CompletedTask; };
             client.OnOmemoIdentityChanged += (timestamp, sender, change,   ct) => { if (Mine(sender)) HandleIdentityChanged(change);   return Task.CompletedTask; };
+            // XEP-0163: a device list that arrives unasked. For a contact
+            // noted as doing no OMEMO this is the news that they now do.
+            client.Connection.OnOmemoDeviceListChanged += (timestamp, sender, who, devices, ct) => { if (Mine(client) && devices.Devices.Count > 0) NowDoesOmemo(who); return Task.CompletedTask; };
+
             client.OnCarbonMessage       += (timestamp, sender, carbon,       ct) => { if (Mine(sender)) HandleCarbon     (carbon);       return Task.CompletedTask; };
             client.OnChatState           += (timestamp, sender, from, state,  ct) => { if (Mine(sender)) HandleChatState  (from, state);  return Task.CompletedTask; };
             client.OnChatMarker          += (timestamp, sender, marker,       ct) => { if (Mine(sender)) HandleChatMarker (marker);       return Task.CompletedTask; };
@@ -942,6 +946,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             }
 
+            // Whoever writes encrypted has a device to write from, whatever
+            // was noted about them before.
+            ForgetNoOmemo(chat);
+
             // No declaration on this path, and none missing. A file shared
             // into an encrypted conversation goes out as an aesgcm:// address
             // (XEP-0454) in a stanza nobody had to encrypt - the address
@@ -1252,6 +1260,9 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             foreach (var chat in Chats.PlaintextConversations())
                 Chats.SetEncryption(chat, true);
 
+            foreach (var chat in Chats.NoOmemoConversations())
+                Chats.SetNoOmemoThere(chat, false);
+
             // JID is a struct, so the null check does not narrow it - Value is
             // what the account actually is.
             if (Account is not JID account)
@@ -1259,6 +1270,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             foreach (var chat in PlaintextChats.Chats(account))
                 Chats.SetEncryption(chat, false);
+
+            // And what was found out about them, which is the account's in
+            // the same way: the contact of one is not the contact of another.
+            foreach (var chat in NoOmemoChats?.Chats(account) ?? [])
+                Chats.SetNoOmemoThere(chat, true);
 
         }
 

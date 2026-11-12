@@ -262,6 +262,44 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region AFileToSomebodyNotedAsDoingNoOmemo_GoesUpInTheClear()
+
+        /// <summary>
+        /// A file follows the same note a message does: where the far end is
+        /// known to publish no OMEMO device, it is not encrypted to nobody.
+        /// </summary>
+        /// <remarks>
+        /// The round above is what happens without the note - OMEMO is on, so
+        /// the file is meant to travel encrypted. Same server, same account,
+        /// and the only thing that differs here is what is known about Alice.
+        /// </remarks>
+        [Test]
+        public async Task AFileToSomebodyNotedAsDoingNoOmemo_GoesUpInTheClear()
+        {
+
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+            await Until(() => api.Client?.OmemoAnnounced == true,
+                        "the web app to announce its OMEMO device");
+
+            api.Chats.Open(Alice);
+            api.Chats.SetNoOmemoThere(Alice, true);
+
+            var picture = APicture();
+
+            var (message, refusal) = await api.SendFileToAsync(Alice, picture, "holiday.png");
+
+            Assert.That(message, Is.Not.Null, $"Nothing was sent: {refusal}");
+
+            Assert.That(Uri.TryCreate(message!.Body, UriKind.Absolute, out var url), Is.True);
+
+            Assert.That(AesGcmUrl.IsAesGcmUrl(url!), Is.False,
+                        "A file was encrypted for somebody noted as having nothing to read it with.");
+
+        }
+
+        #endregion
+
         #region AFileNameThatWritesElsewhereIsRefused()
 
         /// <summary>

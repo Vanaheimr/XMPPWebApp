@@ -620,7 +620,7 @@ class ChatView {
         }
 
         this.peer.querySelector<HTMLButtonElement>('button[data-encryption]')?.
-             addEventListener('click', () => void this.encryption(jid, chat?.encryption === 'off'));
+             addEventListener('click', () => void this.encryption(jid, chat?.encryption !== 'auto'));
 
         for (const button of this.peer.querySelectorAll<HTMLButtonElement>('button[data-action]'))
             button.addEventListener('click', () => void this.contact(jid, button.dataset.action as ContactAction));
@@ -1462,16 +1462,26 @@ function encryptionButton(chat: Chat | undefined): HTMLFragment {
     if (chat === undefined || store.connection?.omemo?.configured !== true)
         return html``;
 
-    const off = chat.encryption === 'off';
+    // Three states, and only the first is the ordinary one. 'unsupported' is
+    // what this app found out rather than what somebody chose: their server
+    // answered that they publish no OMEMO device, so nothing is asked any more
+    // before a message goes out. It looks like 'off' because what happens to
+    // a message is the same, and differs in colour because who decided is not.
+    const state = chat.encryption;
+
+    const title = state === 'off'
+                      ? 'Encryption is off for this conversation - everything sent here goes in the clear. Click to turn it back on.'
+                : state === 'unsupported'
+                      ? 'This contact publishes no OMEMO device, so messages to them go out in the clear without asking first. ' +
+                        'That was found out, not chosen: it ends by itself when a device of theirs shows up. Click to have encryption tried again now.'
+                      : 'Encrypted whenever they can read it; a lock on a line means that line went encrypted. Click to turn encryption off for this conversation.';
 
     return html`
         <button type="button"
-                class="btn small encryption ${off ? 'off' : 'auto'}"
-                data-encryption="${chat.encryption}"
-                title="${off
-                            ? 'Encryption is off for this conversation - everything sent here goes in the clear. Click to turn it back on.'
-                            : 'Encrypted whenever they can read it; a lock on a line means that line went encrypted. Click to turn encryption off for this conversation.'}">
-            <i class="fa-solid ${off ? 'fa-lock-open' : 'fa-lock'}"></i>
+                class="btn small encryption ${state}"
+                data-encryption="${state}"
+                title="${title}">
+            <i class="fa-solid ${state === 'auto' ? 'fa-lock' : 'fa-lock-open'}"></i>
         </button>
     `;
 

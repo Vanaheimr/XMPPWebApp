@@ -1501,6 +1501,479 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Tests
 
         #endregion
 
+        #region The note that a contact does no OMEMO
+
+        private JID Me
+            => JID.Parse($"me@{xmpp!.Domain}");
+
+        private JID Peer
+            => JID.Parse($"alice@{xmpp!.Domain}");
+
+        /// <summary>
+        /// The note as a second start would read it: off the disk, not out of
+        /// this process.
+        /// </summary>
+        private PlaintextChats NotesOnDisk()
+            => new (Path.Combine(root, "omemo", XMPPWebAPI.NoOmemoFileName));
+
+        private async Task SignInAsync()
+        {
+
+            await api!.ApplyAccountAsync(Account("me"), Save: false);
+
+            // Announced and not merely switched on: OMEMO is on three round
+            // trips before this device stands in the account's own list.
+            await Until(() => api.Client?.OmemoAnnounced == true,
+                        "the web app to announce its OMEMO device");
+
+        }
+
+        /// <summary>
+        /// Puts something into Alice's device-list node that this program
+        /// cannot read, and makes the library forget what it knew: from here
+        /// on, asking about her devices produces no answer.
+        /// </summary>
+        private void NobodyAnswersAboutAlice()
+        {
+
+            xmpp!.GetAccount(Peer.ToString())!
+                 .PublishPepItem(OmemoDeviceList.Node,
+                                 OmemoDeviceList.ItemId,
+                                 "<devices xmlns='urn:xmpp:omemo:1'><device id='4711'/></devices>");
+
+            api!.Client!.Connection.OmemoDeviceLists.Forget(Peer);
+
+        }
+
+        private String? EncryptionOnThePage()
+        {
+
+            api!.Chats.Snapshot(out var chats);
+
+            return chats.FirstOrDefault(chat => chat.Jid == Peer)?.ToJSON().Value<String>("encryption");
+
+        }
+
+        /// <summary>
+        /// A contact whose server answered "no OMEMO device" is noted, on
+        /// disk, and the next message asks nobody before it goes out.
+        /// </summary>
+        /// <remarks>
+        /// <b>What this is for is somebody who has pressed send.</b> The
+        /// answer the library remembers runs out after five minutes, and the
+        /// message after that asked again - up to the IQ timeout, in front of
+        /// a button that does nothing, and with a refusal at the end of it
+        /// when the far server was slow. For a contact who does no OMEMO that
+        /// happened over and over, to find out the same thing.
+        ///
+        /// How "asks nobody" is shown: after the first message, asking about
+        /// Alice is made to produce no answer at all. A send that asked would
+        /// be refused - that is the test further up - and this one goes out.
+        /// </remarks>
+        [Test]
+        public async Task AContactWithoutOmemo_IsNoted_AndNotAskedAgain()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await SignInAsync();
+
+                Assert.That(EncryptionOnThePage(), Is.Not.EqualTo("unsupported"),
+                            "noted before anybody answered anything");
+
+                var first = await Send(Peer.ToString(), "In the clear, then.");
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(first.Encrypted, Is.False);
+
+                    Assert.That(api!.Chats.NoOmemoThere(Peer), Is.True,
+                                "her server said she publishes no device, and that was not kept");
+
+                    Assert.That(EncryptionOnThePage(), Is.EqualTo("unsupported"),
+                                "the page is not told, so the lock above the conversation says 'auto'");
+
+                    Assert.That(NotesOnDisk().IsOff(Me, Peer), Is.True,
+                                "kept in this process only - the next start asks all over again");
+
+                    Assert.That(NotesOnDisk().IsOff(JID.Parse($"someone-else@{xmpp!.Domain}"), Peer), Is.False,
+                                "and it belongs to the account that found it out");
+
+                    Assert.That(api.PlaintextChats!.IsOff(Me, Peer), Is.False,
+                                "what was found out was filed as what somebody decided");
+
+                });
+
+                NobodyAnswersAboutAlice();
+
+                var second = await Send(Peer.ToString(), "And without waiting.");
+
+                Assert.That(second.Encrypted, Is.False);
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// The note is made where a conversation is opened, too - and the
+        /// first message that goes out on the strength of it says so.
+        /// </summary>
+        /// <remarks>
+        /// Opening a conversation asks about the devices anyway. With the
+        /// answer kept, even the first message to somebody who does no OMEMO
+        /// waits for nothing - which leaves the sentence "this went out
+        /// unencrypted" without the place it used to be said in, so it has one
+        /// of its own.
+        /// </remarks>
+        [Test]
+        public async Task LookingAhead_NotesIt_AndTheFirstMessageSaysSo()
+        {
+
+            await SignInAsync();
+
+            await api!.LookAgainAsync(api.Client!, Peer);
+
+            Assert.That(api.Chats.NoOmemoThere(Peer), Is.True,
+                        "the answer arrived while the conversation was opened, and was thrown away");
+
+            var first   = await Send(Peer.ToString(), "One.");
+            var second  = await Send(Peer.ToString(), "Two.");
+
+            var said    = await NoticesAbout("unencrypted", TimeSpan.FromSeconds(2));
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(first.Encrypted,  Is.False);
+                Assert.That(second.Encrypted, Is.False);
+
+                Assert.That(said, Has.Count.EqualTo(1),
+                            $"two messages in the clear, and the page was told {said.Count} times");
+
+                Assert.That(said.FirstOrDefault()?.Value<String>("text"), Does.Contain("remembered"),
+                            "it does not say why nothing was asked");
+
+            });
+
+        }
+
+        /// <summary>
+        /// A device list that arrives takes the note away, and the next
+        /// message is encrypted - without anybody touching a switch.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is what makes the note safe to keep.</b> The contact who
+        /// moves to a client that does OMEMO must not stay written to in the
+        /// clear on the word of the old one, and "remember to turn it back on"
+        /// is not a thing anybody remembers.
+        /// </remarks>
+        [Test]
+        public async Task ADeviceThatShowsUp_TakesTheNoteAway()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await SignInAsync();
+
+                await Send(Peer.ToString(), "In the clear, then.");
+
+                Assert.That(api!.Chats.NoOmemoThere(Peer), Is.True, "the state this test starts from");
+
+                // She changes clients. Her list is pushed to everybody who
+                // sees her presence (XEP-0163).
+                await alice.EnableOmemoAsync();
+
+                await Until(() => !api.Chats.NoOmemoThere(Peer),
+                            "the note to go once Alice publishes a device");
+
+                var written  = await Send(Peer.ToString(), "And now under lock.");
+                var said     = await NoticesAbout("now publishes", TimeSpan.FromSeconds(2));
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(written.Encrypted, Is.True,
+                                "she has a device now, and the message went in the clear anyway");
+
+                    Assert.That(NotesOnDisk().IsOff(Me, Peer), Is.False,
+                                "gone from this process and still on disk - back after the next start");
+
+                    Assert.That(said, Has.Count.EqualTo(1),
+                                "why the lock is back was not said, or said more than once");
+
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// And where no push arrived - this side was offline when she changed
+        /// clients - looking again finds the device all the same.
+        /// </summary>
+        [Test]
+        public async Task LookingAgain_GivesTheNoteUp()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await SignInAsync();
+
+                // What an earlier run left behind, from before she had one.
+                api!.Chats.SetNoOmemoThere(Peer, true);
+                api.Client!.Connection.OmemoDeviceLists.Forget(Peer);
+
+                await api.LookAgainAsync(api.Client, Peer);
+
+                Assert.That(api.Chats.NoOmemoThere(Peer), Is.False,
+                            "her list was fetched, holds a device, and the note stayed");
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// No answer is not an answer: it makes no note, and it removes none.
+        /// </summary>
+        /// <remarks>
+        /// <b>The one way this could have become a hole.</b> A note made from
+        /// silence would turn "hold up one stanza" from a message that is
+        /// refused into a contact written to in the clear for good. And a note
+        /// removed by silence would bring the waiting back for exactly the
+        /// contacts whose server is slow, which is whom it is for.
+        /// </remarks>
+        [Test]
+        public async Task ASilentAnswer_NeitherMakesANote_NorRemovesOne()
+        {
+
+            await SignInAsync();
+
+            NobodyAnswersAboutAlice();
+
+            await api!.LookAgainAsync(api.Client!, Peer);
+
+            var (message, _) = await api.SendToAsync(Peer, "Eight at the station, then.");
+
+            Assert.Multiple(() =>
+            {
+
+                Assert.That(message, Is.Null,
+                            "the wrong state to measure: this was supposed to be refused");
+
+                Assert.That(api.Chats.NoOmemoThere(Peer), Is.False,
+                            "nobody said she has no device, and it was noted that she has none");
+
+            });
+
+            api.Chats.SetNoOmemoThere(Peer, true);
+
+            await api.LookAgainAsync(api.Client!, Peer);
+
+            Assert.That(api.Chats.NoOmemoThere(Peer), Is.True,
+                        "a question nobody answered took away what an answer had put there");
+
+        }
+
+        /// <summary>
+        /// A note never stands in front of a lock: where something has
+        /// travelled encrypted, it is not even looked at.
+        /// </summary>
+        /// <remarks>
+        /// The note says "this is somebody who does no OMEMO", and a
+        /// conversation with an encrypted line in it is the proof that it is
+        /// wrong. Acting on it there would be the downgrade the sending policy
+        /// refuses, with a file on disk as the excuse.
+        /// </remarks>
+        [Test]
+        public async Task ANote_NeverOutranksAConversationThatWasEncrypted()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await SignInAsync();
+
+                var first = await Send(Peer.ToString(), "Under lock.");
+
+                Assert.That(first.Encrypted, Is.True, "the state this test starts from");
+
+                // However it got there - an old file, a forged answer.
+                api!.Chats.SetNoOmemoThere(Peer, true);
+
+                var second = await Send(Peer.ToString(), "And still.");
+
+                Assert.That(second.Encrypted, Is.True,
+                            "a note about no OMEMO sent a line in the clear into an encrypted conversation");
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// An encrypted line that comes in takes the note away: whoever
+        /// writes encrypted has a device to write from.
+        /// </summary>
+        /// <remarks>
+        /// The sending would not act on the note any more either way - a
+        /// conversation with a lock in it is never written to in the clear.
+        /// What this keeps right is the page: the lock above a conversation
+        /// that has just been encrypted must not go on saying that the far
+        /// end cannot do it.
+        /// </remarks>
+        [Test]
+        public async Task AnEncryptedLineThatComesIn_TakesTheNoteAway()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await alice.EnableOmemoAsync();
+
+                await SignInAsync();
+
+                // What an earlier run left behind, from before she had one -
+                // and her list was pushed before it was put here.
+                api!.Chats.Open(Peer);
+                api.Chats.SetNoOmemoThere(Peer, true);
+
+                Assert.That(EncryptionOnThePage(), Is.EqualTo("unsupported"), "the state this test starts from");
+
+                await alice.SendEncryptedMessageAsync(Me, "Shall we meet at eight?");
+
+                await Until(() => Lines().Count == 1, "Alice's encrypted line");
+
+                Assert.That(EncryptionOnThePage(), Is.EqualTo("auto"),
+                            "she has just written encrypted, and the page says she cannot");
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// Turning encryption back on at the lock throws the note away, and
+        /// what the library still believed with it - so the next message
+        /// really asks.
+        /// </summary>
+        /// <remarks>
+        /// The note is editable, and this is the edit: somebody who knows
+        /// their contact has changed clients does not want to wait for the
+        /// program to notice.
+        /// </remarks>
+        [Test]
+        public async Task TurningEncryptionBackOn_ThrowsTheNoteAway()
+        {
+
+            var alice = ClientFor("alice");
+
+            try
+            {
+
+                await alice.ConnectAsync();
+                await SignInAsync();
+
+                await Send(Peer.ToString(), "In the clear, then.");
+
+                Assert.That(api!.Chats.NoOmemoThere(Peer), Is.True, "the state this test starts from");
+
+                using var browser = await BrowserAsync();
+
+                var answer = await browser.PostAsync(
+                                       $"api/v1/chats/{Uri.EscapeDataString(Peer.ToString())}/encryption",
+                                       new StringContent("{\"enabled\":true}", Encoding.UTF8, "application/json")
+                                   );
+
+                var text = await answer.Content.ReadAsStringAsync();
+
+                Assert.Multiple(() =>
+                {
+
+                    Assert.That(answer.StatusCode, Is.EqualTo(HttpStatusCode.OK), text);
+
+                    Assert.That(JObject.Parse(text).Value<String>("encryption"), Is.EqualTo("auto"));
+
+                    Assert.That(api.Chats.NoOmemoThere(Peer), Is.False,
+                                "asked to try again, and the note is still there");
+
+                    Assert.That(EncryptionOnThePage(), Is.EqualTo("auto"));
+
+                    Assert.That(NotesOnDisk().IsOff(Me, Peer), Is.False,
+                                "and it would be back after the next start");
+
+                    Assert.That(api.Client!.Connection.OmemoDeviceLists.Get(Peer), Is.Null,
+                                "the next message would be answered out of what was believed five minutes ago");
+
+                });
+
+            }
+            finally
+            {
+                await alice.DisposeAsync();
+            }
+
+        }
+
+        /// <summary>
+        /// The note comes back with the account it belongs to.
+        /// </summary>
+        [Test]
+        public async Task ANote_IsThereAgainAfterAStart()
+        {
+
+            // What a previous run wrote.
+            api!.NoOmemoChats!.Set(JID.Parse($"me@{xmpp!.Domain}"), JID.Parse($"alice@{xmpp.Domain}"), true);
+
+            await SignInAsync();
+
+            Assert.That(api.Chats.NoOmemoThere(Peer), Is.True,
+                        "the file was written and never read");
+
+        }
+
+        #endregion
+
         /// <summary>
         /// Writes a message the way the page does, and gives back the line as
         /// the conversation now holds it.

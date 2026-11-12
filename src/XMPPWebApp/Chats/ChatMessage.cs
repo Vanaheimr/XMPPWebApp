@@ -383,6 +383,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
     /// XEP-0084: the id of this contact's picture, or null when they have none
     /// that this client kept.
     /// </param>
+    /// <param name="NoOmemoThere">
+    /// XEP-0384: whether the far end is noted as publishing no OMEMO device,
+    /// so that nothing is asked before a message to them goes out in the
+    /// clear. Learnt, not chosen - see ChatStore.SetNoOmemoThere.
+    /// </param>
     public sealed record ChatSummary(JID                Jid,
                                      String?            Name,
                                      Boolean            InRoster,
@@ -395,7 +400,8 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                                      ChatMessage?       LastMessage,
                                      DateTimeOffset?    LastActivity,
                                      Boolean            EncryptionOn   = true,
-                                     String?            Avatar         = null)
+                                     String?            Avatar         = null,
+                                     Boolean            NoOmemoThere   = false)
     {
 
         /// <summary>
@@ -424,7 +430,14 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp.Chats
                    // "auto" and not "on", because on is not what it does: it
                    // encrypts when the far end can read it and says per line
                    // what happened. Off is the only state somebody chose.
-                   new JProperty("encryption",      EncryptionOn ? "auto" : "off"),
+                   //
+                   // "unsupported" is auto having found out: the far end
+                   // publishes no OMEMO device, so nothing is asked any more
+                   // before a line goes out in the clear. Off wins where both
+                   // are set, because a decision outranks an observation.
+                   new JProperty("encryption",      !EncryptionOn  ? "off"
+                                                   : NoOmemoThere  ? "unsupported"
+                                                   :                 "auto"),
 
                    // XEP-0084: the id and not the picture. It is the SHA-1 of
                    // the bytes, so the address the browser builds out of it

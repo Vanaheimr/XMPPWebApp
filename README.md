@@ -193,6 +193,25 @@ that talks to it.
   including the refusal — somebody who turns it off has been told what they
   are turning off.
 
+  **A contact who does no OMEMO is found out once, not before every message.**
+  Whether somebody can be encrypted to is a question to their server, and it
+  used to be asked in front of whoever had pressed send — again every five
+  minutes, for up to ten seconds each, and with a refusal at the end when that
+  server was slow. Plenty of clients speak only the older OMEMO
+  (`eu.siacs.conversations.axolotl`), which this program does not, so for those
+  contacts the answer was always the same one. Now the answer "publishes no
+  OMEMO device" is kept beside the keys (`no-omemo-chats.json`), the next
+  message goes out at once, and the padlock in the header stands open in amber
+  rather than red: found out, not chosen. **It mends itself** — a device list
+  that arrives, an encrypted line that comes in, or the look this program takes
+  in the background whenever the conversation is opened or written to takes the
+  note away, and the next message is encrypted. Clicking the amber padlock does
+  the same by hand, for somebody who knows their contact changed clients.
+  Two things it never does: it is never made from a question nobody answered,
+  because that would turn one delayed stanza into a contact written to in the
+  clear for good; and it never applies to a conversation with an encrypted line
+  in it, where the refusal above stands.
+
   **And blind trust cuts both ways, which is the half that costs something.**
   A device that has written before and turns up with a *different* identity key
   gets its message refused — rightly, because a new installation and somebody

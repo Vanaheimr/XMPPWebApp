@@ -186,7 +186,7 @@ export interface Chat {
      * There is no 'on': this app encrypts when it can and writes in the clear
      * when it cannot, and every line says which of the two it was.
      */
-    encryption:      'auto' | 'off';
+    encryption:      'auto' | 'off' | 'unsupported';
     /**
      * XEP-0084: the id of this contact's picture, or null when they have none
      * this app kept.
@@ -630,7 +630,7 @@ export const api = {
         contact:   (chat: string, action: ContactAction)     => request<void>                ('POST', `/chats/${jid(chat)}/contact`, { action }),
 
         /** XEP-0384: turn encryption off for this conversation, or back on. */
-        encryption: (chat: string, enabled: boolean)         => request<{ seq: number; encryption: 'auto' | 'off' }>('POST', `/chats/${jid(chat)}/encryption`, { enabled })
+        encryption: (chat: string, enabled: boolean)         => request<{ seq: number; encryption: 'auto' | 'off' | 'unsupported' }>('POST', `/chats/${jid(chat)}/encryption`, { enabled })
     },
 
     /**

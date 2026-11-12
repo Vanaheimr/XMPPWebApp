@@ -117,17 +117,28 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// what a conversation is. A restart says it again, and should -
         /// nobody saw the first one.
         ///
-        /// <b>Nothing ever takes an address out again</b>, and the reason is
-        /// <see cref="HowToSend"/>: a conversation that has been encrypted
-        /// once is refused rather than written in the clear, so this sentence
-        /// can only ever belong to a conversation in which nothing has ever
-        /// travelled encrypted. Re-arming it after an encrypted message would
-        /// be a line reachable by nothing - except through a thousand further
-        /// messages, which is how long the store holds one before the
-        /// encrypted one it remembers falls out of it.
+        /// <b>An encrypted message does not take an address out again</b>,
+        /// and the reason is <see cref="HowToSend"/>: a conversation that has
+        /// been encrypted once is refused rather than written in the clear,
+        /// so this sentence can only ever belong to a conversation in which
+        /// nothing has ever travelled encrypted. Re-arming it after an
+        /// encrypted message would be a line reachable by nothing - except
+        /// through a thousand further messages, which is how long the store
+        /// holds one before the encrypted one it remembers falls out of it.
+        ///
+        /// <b>Two things do</b>, and both are somebody having been told the
+        /// opposite since: the lock above the conversation being set back to
+        /// trying, and the notice that a device of theirs has shown up. After
+        /// either, a line in the clear is news again.
         /// </remarks>
         private readonly ConcurrentDictionary<String, Byte>
                                          saidItWentInTheClear  = new();
+
+        /// <summary>
+        /// What the file behind <see cref="NoOmemoChats"/> is called below the
+        /// OMEMO directory.
+        /// </summary>
+        public const String NoOmemoFileName = "no-omemo-chats.json";
 
         #endregion
 
@@ -160,6 +171,18 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
         /// null when there is no OMEMO at all.
         /// </summary>
         public PlaintextChats?           PlaintextChats { get; }
+
+        /// <summary>
+        /// XEP-0384: the conversations whose far end was found to publish no
+        /// OMEMO device, or null when there is no OMEMO at all.
+        /// </summary>
+        /// <remarks>
+        /// The same kind of file as <see cref="PlaintextChats"/> and
+        /// deliberately not the same file: that one holds what somebody
+        /// decided, this one what a server answered, and only one of the two
+        /// may be taken back by the program on its own.
+        /// </remarks>
+        public PlaintextChats?           NoOmemoChats   { get; }
 
         /// <summary>
         /// What went over the wire, while somebody is looking.
@@ -277,6 +300,10 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             this.PlaintextChats = OmemoDirectory is null
                                       ? null
                                       : new PlaintextChats(Path.Combine(OmemoDirectory, XMPPWebApp.Chats.PlaintextChats.DefaultFileName));
+
+            this.NoOmemoChats   = OmemoDirectory is null
+                                      ? null
+                                      : new PlaintextChats(Path.Combine(OmemoDirectory, NoOmemoFileName));
 
             // And the faces beside them, when there is a directory to put them
             // in. An empty DataDirectory means this process was given nowhere
@@ -807,8 +834,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // Neither awaited nor reported: it is a head start and nothing
             // more, and whatever it does not bring, the sending asks for
             // itself.
+            //
+            // What comes back is also what keeps the note "this contact does
+            // no OMEMO" honest in both directions - see LookAgainAsync.
             if (Client is { IsConnected: true } client && client.OmemoEnabled)
-                _ = client.Connection.WarmOmemoDeviceListAsync(jid);
+                _ = LookAgainAsync(client, jid);
 
             Chats.TrySnapshot(jid, out var sequence, out var chat, out var messages);
 
@@ -1793,7 +1823,12 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             // deliberately left in the clear - and not "never", which would put
             // a photograph on a server in a conversation somebody deliberately
             // encrypted.
-            var encrypt = client.OmemoEnabled && Chats.EncryptionOn(Jid);
+            //
+            // And not where the far end is known to have nothing to read it
+            // with: a file encrypted to nobody is a file that was not sent.
+            var encrypt = client.OmemoEnabled &&
+                          Chats.EncryptionOn(Jid) &&
+                          !KnownToDoNoOmemo(Jid);
 
             using var stream = new MemoryStream(Content);
 
@@ -2186,6 +2221,13 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
             var turnedOff           = !Chats.EncryptionOn(Jid);
             var wasEncryptedBefore  = Chats.WasEncrypted(Jid);
 
+            // What an earlier message found out, kept: their server answered
+            // that they publish no OMEMO device. Then nothing is asked before
+            // this one goes out - the asking is what somebody who has pressed
+            // send would be waiting for, up to the IQ timeout, every time the
+            // remembered answer has run out.
+            var noOmemoThere        = KnownToDoNoOmemo(Jid);
+
             // What an answer carries along, written the way every client
             // writes it. Empty for a line without text, which quotes nothing.
             var quote               = Answering is null
@@ -2222,7 +2264,7 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                                                         author,
                                                         quotedText: quote.Length > 0 ? Answering.Body : null);
 
-            switch (HowToSend(client.OmemoEnabled, turnedOff, wasEncryptedBefore))
+            switch (HowToSend(client.OmemoEnabled && !noOmemoThere, turnedOff, wasEncryptedBefore))
             {
 
                 case Delivery.Encrypted:
@@ -2264,6 +2306,11 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
                     messageId = await SendInTheClear();
 
+                    // Kept, so that the next message does not ask again and
+                    // wait again. Only here and in LookAgainAsync, and both
+                    // hold the same thing in their hands: an answer.
+                    NoteNoOmemo(Jid);
+
                     // After the sending and not before it: a line that did not
                     // go out has not gone out in the clear either, and the
                     // throw would be reported twice over.
@@ -2278,7 +2325,25 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                     return (null, CannotEncryptText(Jid, null));
 
                 default:
+
                     messageId = await SendInTheClear();
+
+                    // In the clear because of what was noted and not because
+                    // somebody chose it. Said once per run like its neighbour
+                    // above, for the same reason and to the same reader - and
+                    // then asked about behind the reader's back, so that the
+                    // note is given up when it stops being true and not when
+                    // somebody happens to think of it.
+                    if (noOmemoThere && !turnedOff && client.OmemoEnabled)
+                    {
+
+                        if (saidItWentInTheClear.TryAdd(Jid.Bare.ToString(), 0))
+                            PublishNotice("warning", NotedInTheClearText(Jid));
+
+                        _ = LookAgainAsync(client, Jid);
+
+                    }
+
                     break;
 
             }
@@ -2370,10 +2435,30 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             => $"This message to {Jid} went out unencrypted: their server answered that they publish no " +
                "OMEMO device, so there was nothing to encrypt it to. A line that travelled encrypted " +
-               "carries a lock - this one does not, and neither will the next ones while that stays true." +
+               "carries a lock - this one does not, and neither will the next ones while that stays true. " +
+               "That answer is remembered: the next messages go out at once instead of asking first, until " +
+               "a device of theirs shows up - or until you say otherwise at the lock above the conversation." +
                (Sent?.Skipped.Count > 0
                     ? $" ({Describe(Sent.Skipped)})"
                     : "");
+
+        /// <summary>
+        /// What a message says that went out in the clear because of what was
+        /// noted about the far end earlier, without anything being asked.
+        /// </summary>
+        /// <remarks>
+        /// The first one of a run, like <see cref="InTheClearText"/>: a
+        /// restart forgets what was said to whoever is looking at the page,
+        /// and it does not forget the note. So the note says itself again,
+        /// once, and names where it can be changed - a thing remembered on
+        /// somebody's behalf has to be a thing they can find.
+        /// </remarks>
+        private static String NotedInTheClearText(JID Jid)
+
+            => $"This message to {Jid} went out unencrypted: they were found to publish no OMEMO device, and " +
+               "that is remembered, so nothing was asked first. It is looked into again in the background, " +
+               "and encryption comes back by itself when a device of theirs shows up. To have it tried " +
+               "again right now, use the lock above the conversation.";
 
         /// <summary>
         /// Which devices of the recipient could not be written to, for a
@@ -2391,6 +2476,138 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
                            Skipped.Select(device => device.DeviceId == 0
                                                         ? $"{device.Jid} ({device.Reason})"
                                                         : $"{device.Jid} device {device.DeviceId} ({device.Reason})"));
+
+        #endregion
+
+        #region (private) KnownToDoNoOmemo / NoteNoOmemo / ForgetNoOmemo / LookAgainAsync
+
+        /// <summary>
+        /// Whether a message to this conversation may go out in the clear
+        /// without anybody being asked first.
+        /// </summary>
+        /// <remarks>
+        /// <b>Never where anything has travelled encrypted.</b> The note is
+        /// about somebody who does no OMEMO, and a conversation with a lock in
+        /// it is not that - there the refusal in <see cref="HowToSend"/>
+        /// stands, and a note that got in its way would be the downgrade it
+        /// exists to stop, made permanent.
+        /// </remarks>
+        private Boolean KnownToDoNoOmemo(JID Jid)
+
+            => Chats.NoOmemoThere(Jid) &&
+               !Chats.WasEncrypted(Jid);
+
+        /// <summary>
+        /// Keeps that this contact's server answered: no OMEMO device.
+        /// </summary>
+        /// <remarks>
+        /// <b>Only ever called with an answer in hand.</b> A question nobody
+        /// answered is not kept, here or anywhere: whoever can hold up one
+        /// stanza would otherwise have a contact written to in the clear for
+        /// good, rather than for one message that is refused anyway.
+        /// </remarks>
+        private void NoteNoOmemo(JID Jid)
+        {
+
+            if (Chats.WasEncrypted(Jid) ||
+                !Chats.SetNoOmemoThere(Jid, true))
+            {
+                return;
+            }
+
+            if (Settings is not null)
+                NoOmemoChats?.Set(Settings.BareJID, Jid, true);
+
+            logger.LogInformation("OMEMO: {Jid} publishes no device; noted, and not asked again before sending", Jid);
+
+        }
+
+        /// <summary>
+        /// Takes the note away again.
+        /// </summary>
+        /// <returns>Whether there was one.</returns>
+        private Boolean ForgetNoOmemo(JID Jid)
+        {
+
+            if (!Chats.SetNoOmemoThere(Jid, false))
+                return false;
+
+            if (Settings is not null)
+                NoOmemoChats?.Set(Settings.BareJID, Jid, false);
+
+            return true;
+
+        }
+
+        /// <summary>
+        /// Asks which devices the far end has, away from anybody waiting, and
+        /// puts the note right in whichever direction the answer points.
+        /// </summary>
+        /// <remarks>
+        /// <b>This is what makes the note safe to keep.</b> A contact who
+        /// moves to a client that does OMEMO must not stay written to in the
+        /// clear because of what their old one answered, and nobody should
+        /// have to remember to flip a switch for that. So the question the
+        /// sending no longer asks is asked here instead - when a conversation
+        /// is opened, and after every message that went out on the strength of
+        /// the note - and the library asks the server at most once in five
+        /// minutes for it.
+        ///
+        /// <b>No answer changes nothing</b>, in either direction: it neither
+        /// makes a note nor removes one.
+        /// </remarks>
+        internal async Task LookAgainAsync(XMPPClient  client,
+                                           JID         Jid)
+        {
+
+            try
+            {
+
+                await client.Connection.WarmOmemoDeviceListAsync(Jid);
+
+                // The account may have been changed while the answer was on
+                // its way, and the note belongs to the one that asked.
+                if (!ReferenceEquals(client, Client))
+                    return;
+
+                var known = client.Connection.OmemoDeviceLists.Get(Jid);
+
+                if (known is null)
+                    return;
+
+                var (list, lookup) = known.Value;
+
+                if (lookup == PepLookup.Published && list is { Devices.Count: > 0 })
+                    NowDoesOmemo(Jid);
+
+                else if (Chats.EncryptionOn(Jid))
+                    NoteNoOmemo(Jid);
+
+            }
+            catch (Exception e)
+            {
+                logger.LogDebug("OMEMO: looking again at the devices of {Jid} failed: {Reason}", Jid, e.Message);
+            }
+
+        }
+
+        /// <summary>
+        /// A device of theirs has shown up: the note goes, and the page is
+        /// told why the next line will carry a lock.
+        /// </summary>
+        private void NowDoesOmemo(JID Jid)
+        {
+
+            if (!ForgetNoOmemo(Jid))
+                return;
+
+            saidItWentInTheClear.TryRemove(Jid.Bare.ToString(), out _);
+
+            PublishNotice("info",
+                          $"{Jid.Bare} now publishes an OMEMO device. Messages to them were going out unencrypted " +
+                          "because they had none - from here on they are encrypted again.");
+
+        }
 
         #endregion
 
@@ -2435,6 +2652,19 @@ namespace org.GraphDefined.Vanaheimr.XMPPWebApp
 
             if (Settings is not null)
                 PlaintextChats?.Set(Settings.BareJID, jid, !on);
+
+            // Either way the note goes: off needs none, and whoever turns
+            // encryption back on is asking for it to be tried - not for the
+            // answer that was remembered, and not for one the library still
+            // holds from five minutes ago either. What the next message finds
+            // out is then said again like the first time.
+            ForgetNoOmemo(jid);
+
+            if (on)
+            {
+                Client?.Connection.OmemoDeviceLists.Forget(jid);
+                saidItWentInTheClear.TryRemove(jid.Bare.ToString(), out _);
+            }
 
             return Task.FromResult(
                        JSONResponse(
