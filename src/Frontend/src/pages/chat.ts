@@ -1,5 +1,6 @@
 import { api, type Chat, type ContactAction, type Message } from '../api/client';
 import { auth } from '../auth';
+import { InFlight } from '../chat/inFlight';
 import { lineActions, quotation, showLine } from '../chat/lines';
 import { renderBody } from '../chat/links';
 import { store, type StoreEvent } from '../chat/store';
@@ -135,6 +136,9 @@ class ChatView {
 
     /** XEP-0308/0424: the id of the line in the box, or null when it is new. */
     private editing:     string | null = null;
+
+    /** The send that is under way, so that a second Enter does not start a second one. */
+    private readonly sending = new InFlight();
 
     /** What was in the box before an edit took it over, to be put back afterwards. */
     private draftBeforeEdit = '';
@@ -1296,7 +1300,21 @@ class ChatView {
         if (jid === null || body.trim().length === 0)
             return;
 
+        // Enter while the last Enter is still on its way. The button was
+        // always disabled for the length of a send and the keyboard never
+        // was, so a send that hung could be repeated by pressing again - and
+        // every press went out as a message of its own.
+        if (this.sending.busy)
+            return;
+
         this.sendButton.disabled = true;
+
+        // And the box holds still, so that it shows what is being sent and
+        // nothing typed meanwhile is wiped when the line arrives.
+        this.textarea.readOnly   = true;
+        this.composer.classList.add('sending');
+
+        await this.sending.run(async () => {
 
         try
         {
@@ -1319,11 +1337,16 @@ class ChatView {
                 if (this.replyingTo === answers)
                     this.stopReplying();
 
-                this.textarea.value = '';
                 this.drafts.delete(jid);
-                this.autosize();
-                this.atBottom = true;
-                this.scrollToBottom();
+
+                // Somebody may have moved to another conversation while this
+                // one was still sending, and the box is theirs now.
+                if (this.current === jid) {
+                    this.textarea.value = '';
+                    this.autosize();
+                    this.atBottom = true;
+                    this.scrollToBottom();
+                }
 
             }
 
@@ -1335,8 +1358,12 @@ class ChatView {
         finally
         {
             this.sendButton.disabled = false;
+            this.textarea.readOnly   = false;
+            this.composer.classList.remove('sending');
             this.textarea.focus();
         }
+
+        });
 
     }
 

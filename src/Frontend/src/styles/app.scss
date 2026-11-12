@@ -1114,6 +1114,13 @@ input, textarea, select {
 
 // XEP-0308: the box holds a line being said again, not a new one. Marked,
 // because sending it replaces something instead of adding to it.
+// A line on its way: the box holds still and looks like it, so that nobody
+// takes a send that is slow for one that did not happen.
+.composer.sending textarea {
+    opacity:  0.6;
+    cursor:   progress;
+}
+
 .composer.editing textarea {
     border-color: var(--accent, #7a5af8);
 }
